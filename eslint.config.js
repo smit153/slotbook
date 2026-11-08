@@ -19,6 +19,19 @@ export const clockRule = {
       selector: "NewExpression[callee.name='Date'][arguments.length=0]",
       message: 'Do not read the JS clock in booking logic; use the DB now() passed in (design §5.5).',
     },
+    // Luxon reads the same process clock:
+    {
+      selector: "CallExpression[callee.object.name='DateTime'][callee.property.name='now']",
+      message: 'DateTime.now() reads the process clock; use the DB now() passed in (design §5.5).',
+    },
+    {
+      selector: "CallExpression[callee.object.name='DateTime'][callee.property.name='local'][arguments.length=0]",
+      message: 'DateTime.local() with no arguments reads the process clock (design §5.5).',
+    },
+    {
+      selector: "MemberExpression[object.name='Settings'][property.name='now']",
+      message: 'Do not touch Luxon Settings.now in booking logic (design §5.5).',
+    },
   ],
 };
 
