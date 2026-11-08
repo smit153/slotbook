@@ -12,12 +12,20 @@ export async function dbNow(db: Database): Promise<Date> {
   return rows[0]!.now;
 }
 
-/** Next week's Monday 09:00 New York: always bookable (future, inside Mon–Fri 09–17). */
+/**
+ * The first Monday 09:00 New York that is at least 7 days ahead (so 7–13 days out):
+ * always in the future, inside Mon–Fri 09–17, and far enough for notice/horizon tests.
+ * NB: Luxon's set({ weekday: 1 }) moves WITHIN the ISO week — on a Sunday "now + 1 week,
+ * set Monday" is tomorrow. That bug made a horizon test fail only on Sundays (Phase 4).
+ */
+export function firstMondayNineAtLeastAWeekAhead(now: DateTime): DateTime {
+  const inAWeek = now.setZone(NY).plus({ days: 7 });
+  const daysToMonday = (8 - inAWeek.weekday) % 7;
+  return inAWeek.plus({ days: daysToMonday }).set({ hour: 9, minute: 0, second: 0, millisecond: 0 });
+}
+
 export async function nextMonday9(db: Database): Promise<Date> {
-  return DateTime.fromJSDate(await dbNow(db), { zone: NY })
-    .plus({ weeks: 1 })
-    .set({ weekday: 1, hour: 9, minute: 0, second: 0, millisecond: 0 })
-    .toJSDate();
+  return firstMondayNineAtLeastAWeekAhead(DateTime.fromJSDate(await dbNow(db))).toJSDate();
 }
 
 export interface Scenario {

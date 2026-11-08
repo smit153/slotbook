@@ -5,6 +5,7 @@ import { findOfferedSlot, generateSlots } from '../../src/server/engine/slots.js
 import { loadSlotContext } from '../../src/server/db/slot-inputs.js';
 import { createBooking, createEventType, createHost, createOccupancy, seatsTaken, testDb, truncateAll } from '../helpers/db.js';
 import { assertSeatInvariant } from '../helpers/invariants.js';
+import { nextMonday9 as sharedNextMonday9 } from '../helpers/scenario.js';
 
 const db = testDb();
 afterAll(() => db.destroy());
@@ -21,10 +22,9 @@ async function dbNow(): Promise<Date> {
   return rows[0]!.now;
 }
 
-/** Next week's Monday 09:00 New York — always in the future relative to the DB clock. */
+/** First Monday 09:00 NY at least 7 days ahead (same helper as test/helpers/scenario.ts). */
 async function nextMonday9(): Promise<Date> {
-  const now = DateTime.fromJSDate(await dbNow(), { zone: NY });
-  return now.plus({ weeks: 1 }).set({ weekday: 1, hour: 9, minute: 0, second: 0, millisecond: 0 }).toJSDate();
+  return sharedNextMonday9(db);
 }
 
 async function setupHost(o: { capacity?: number } = {}) {
