@@ -318,7 +318,7 @@ Enforced once, by the service's `transition()` table (§4.1).
 
 ## 6. Slot generation and time zones
 
-Pure function `generateSlots(input) → Slot[]`. The hold and reschedule paths call the same function for re-validation.
+Pure function `generateSlots(query) → Slot[]` in `src/server/engine/slots.ts`. The hold and reschedule paths re-validate with `findOfferedSlot(input, startAt)`, which runs the same code over `[startAt, startAt + 1 ms)`. Inputs come from `loadAvailabilityInput(trx, …)` (`src/server/db/slot-inputs.ts`), which reads `now()` and the live seats in the caller's transaction.
 
 ```
 input: hostTz, weeklyRules, overrides, eventType, liveOccupancies, now (from DB),
@@ -366,7 +366,7 @@ Europe ends DST on **Sun Oct 25 2026**. The US ends DST on **Sun Nov 1 2026**. F
 
 The host's grid never moves. The guest's view shifts twice, in opposite directions. A "fixed offset" implementation gets the middle row wrong.
 
-**Cross-day case (also in R12):** the host adds a custom window 18:00–21:00 NY on Mon Oct 26. The guest asks for Berlin day Tue Oct 27 (`[Oct 26 23:00Z, Oct 27 23:00Z)`). They must see 00:00–02:00 Berlin, which comes from the *host's Monday*. The ±1-day padding plus instant filtering guarantees this whatever the offsets.
+**Cross-day case (also in R12):** the host adds a custom window 18:00–21:00 NY on Mon Oct 26. The guest asks for Berlin day Tue Oct 27 (`[Oct 26 23:00Z, Oct 27 23:00Z)`). They must see 00:00–02:00 Berlin, which comes from the *host's Monday*. This is guaranteed by iterating **host** days from `localDate(from, hostTz)` to `localDate(to, hostTz)` and filtering by UTC instant. Windows never cross local midnight, so a slot starting in `[from, to)` always falls on one of those host days. The extra ±1 day of padding is defence in depth, not what makes the case work. Phase 3 found that removing it does not break this test (see `docs/phases/phase-3.md`). The bug the padding guards against is iterating *guest* days, or converting the range to dates in the wrong zone.
 
 ---
 
