@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
@@ -51,7 +51,8 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
         },
     trustProxy: trustProxyOption(config.TRUST_PROXY),
     genReqId: () => randomUUID(),
-    requestIdLogLabel: 'request_id',
+    // (Fastify 5.x: requestIdLogLabel moved into the log controller.)
+    logController: new LogController({ requestIdLogLabel: 'request_id' }),
   });
 
   installSecurityHeaders(app);
