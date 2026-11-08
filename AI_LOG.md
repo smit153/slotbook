@@ -1,65 +1,11 @@
 # AI_LOG
 
-How AI was used to build Slotbook. The brief asks for key prompts, where the AI got things wrong, and what was changed by hand. Raw transcripts are optional; they are included below.
+Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the terminal, working directly in this repo. It is updated on every message.
 
-**Tool:** Claude Code (Claude Opus 5.5), in the terminal, working directly in this repo.
-
----
-
-## Summary
-
-### How I worked with it
-1. **Design first, no code.** I gave the AI the brief PDF and asked for a design doc. I told it not to write code until I approved the design.
-2. **Several review rounds.** I reviewed each version of `docs/design.md`, answered its open questions, and pushed back on specific flaws. It revised the doc each time, and each version was committed (v0.1 → v0.2 → v0.3).
-3. **Small commits, never squashed.**
-4. **Phased build with a review gate.** There are 9 phases. Before each one the AI writes a short plan and waits for my "go". After each one it writes `docs/phases/phase-N.md` (planned vs. actual, bugs, test counts, commits, open questions) and waits for my review.
-5. **This log is updated on every message**, without me having to ask.
-
-### Key prompts
-- "check slotbook.pdf … create a design doc how you will create all the parts … once I give go ahead then only start coding"
-- Stack and scope decisions: Fastify + React/Vite + **Kysely** (raw `sql` kept for constraints and locking), core first, a narrowed list of extensions, deployment later.
-- Security and consistency review of v0.1, which fed into v0.2.
-- Worker, clock, time-zone and scope review of v0.2, which fed into v0.3.
-
-### Where the AI got things wrong (caught in review)
-| # | AI's mistake | Version | Who caught it | Fix |
-|---|---|---|---|---|
-| 1 | Confirm idempotency stored the **plaintext manage token** in `idempotency_keys.response_body`, which contradicted its own "tokens stored hashed" claim (R18). | v0.1 | me | All secrets are HMAC-derived from `APP_SECRET` + booking id. Only hashes are stored, and replays re-derive. |
-| 2 | Notification payloads would also have held the manage link, so the same leak existed in the outbox. | v0.1 | AI, while fixing #1 | The dispatcher derives the link when it sends. |
-| 3 | A hold was protected only by its id, so **anyone with the id could confirm it**. | v0.1 | me | A `hold_secret` is required on confirm. A wrong secret gives 404. |
-| 4 | Manage tokens in URL paths could leak via the Referer header and logs. | v0.1 | me | `Referrer-Policy: no-referrer`, log redaction, and the manage link uses the URL fragment (`/manage#token`). |
-| 5 | After a constraint error the transaction is aborted, so the **409 could not be stored** for the idempotency key. | v0.1 | me | `SAVEPOINT` around the seat claim, plus an explicit policy for which outcomes are cached. |
-| 6 | The slots read path used `seats_taken`, so an **expired but unswept hold showed as full**. | v0.1 | me | The read path counts live seats from bookings. |
-| 7 | There was no invariant test for `seats_taken`. | v0.1 | me | Trigger-maintained counter + stored/live invariant check after every test. |
-| 8 | A reused occupancy row at 0 seats kept a **stale capacity and stale buffers**. | v0.1 | me | Refresh-on-zero upsert. |
-| 9 | The "client clock skew" test **tested nothing**, because the client never sends its clock. | v0.2 | me | Replaced by an app-server clock skew test, plus a lint rule banning the JS clock in service code. |
-| 10 | Slot generation iterated host days in the range only, so **guest days spanning two host days could be cut off**. | v0.2 | me | Host days padded by ±1 and filtered by UTC instant. |
-| 11 | Slot end used wall-clock arithmetic, which is wrong across DST. | v0.2 | me | End = start instant + duration in real minutes. |
-| 12 | Weekday numbering was unspecified, and **date overrides could mix a day off with custom hours**. | v0.2 | me | ISO weekday with a `CHECK`. Composite FK so windows only attach to `custom` overrides. |
-| 13 | A retried reschedule to the same slot would have sent a second notification, and the dispatcher wasn't safe with multiple instances. | v0.2 | me | Pure no-op reschedule. `FOR UPDATE SKIP LOCKED` + lease, with at-least-once delivery. |
-| 14 | **Scope creep.** The design had grown well past the 4–5h core: an unused `manage_token_version` column, two status guards, and 25 unranked reliability cases. | v0.2 | me | A cut list (core / if time / known gaps), the column and the second guard dropped, and the cases ranked. |
-| 15 | The DST example used a NY host and an India guest. That misses the more interesting week when Europe and the US switch on different dates. | v0.1–v0.2 | me | NY host and Berlin guest, Oct 23 – Nov 2 2026, when the gap is 5h instead of 6h. |
-| 16 | Installed TypeScript "latest" (7.0), which has no JS compiler API, so typescript-eslint (`<6.1`) breaks. The plan's risk list missed it. | Phase 1 | AI (lint/typecheck) | Pinned `typescript@~6.0`. |
-| 17 | Imported Kysely's `Migrator` from `kysely`. Kysely 0.29 moved it to `kysely/migration`. | Phase 1 | AI (tsc) | Fixed the import path. |
-| 18 | Passed a numeric `trustProxy` to Fastify. The runtime accepts it but the types don't. | Phase 1 | AI (tsc) | Hop-count function `(addr, hop) => hop < n`, unit-tested. |
-| 19 | The Phase 1 plan ordered the server commit before the DB layer it depends on. | Phase 1 | AI | Swapped the commit order. |
-| 20 | The design doc's lock order left out the idempotency-key row and the occupancy rows, and didn't say which paths skip the IP lock. `trustProxy` was only "`trustProxy` in prod". | v0.3 | me (asked to confirm before Phase 4) | Global lock order + per-path table + deadlock argument. `TRUST_PROXY` = false / hop count, never `true`. |
-
-### What I decided or changed by hand
-- Stack: Kysely instead of plain SQL or Prisma.
-- Scope: core first; then observability, E2E + CI and the load test only; daily cap only if the core is green; full rate limiting only if time; a minimal per-IP hold cap in the core.
-- Deployment: Render + Supabase/Neon later on, using the direct DB connection, not a transaction pooler.
-- Assumptions: slot step = duration. Buffers may fall outside the window. Min notice is checked at hold time only. Bookings keep their UTC times when the host changes time zone.
-- `pnpm test` must start its own test DB.
-- Git: small commits, never squashed, no co-author trailer.
-- Process: 9 phases with plan → "go" → build → phase summary → review. The concurrency test must be written first and seen to fail (Phase 4). Fall-back duplicate slots must be labelled EDT/EST (Phase 8).
-- AI_LOG must be kept up to date on every message.
+- User messages are verbatim, typos included. Assistant replies are the final message of each turn, lightly condensed. Tool actions are summarised in *italics*.
+- What the AI got right and wrong is recorded per phase in [`docs/phases/`](docs/phases/), not here: `phase-0-design.md` covers the design reviews, and `phase-N.md` covers each build phase.
 
 ---
-
-## Appendix: raw transcript
-
-User messages are verbatim, typos included. Assistant replies are the final message of each turn, lightly condensed. Tool calls (file writes, git commands) are summarised in *italics*.
 
 ### Session 1: design (2026-11-08)
 
@@ -252,4 +198,31 @@ User messages are verbatim, typos included. Assistant replies are the final mess
 
 ---
 
-<!-- Later sessions: append new turns below and add new rows to "Where the AI got things wrong". -->
+### Session 3: Phase 2 (schema)
+
+#### Turn 7. User
+> Looks good. Answers: yes, keep slotbook.pdf gitignored; Postgres 16 and Node 24 are fine; keep 5432 with the DB_PORT override. Clean up: drop slotbook_test from the Compose DB and stop the container; keep .env. and stop grading in ai logs just write transscript on every message keep all things you get correct and wrong in docs/phase you just need to continue transcript
+
+*AI dropped `slotbook_test`, stopped the Compose containers and kept `.env`. It made this file transcript-only: the design-phase table of what it got right and wrong moved to `docs/phases/phase-0-design.md`, and the Phase 1 items were already in `phase-1.md`. In a throwaway PG16 container it checked that a GiST exclusion works with `uuid =` + a custom `timerange` type (adjacent windows allowed, overlap rejected), and that a partial exclusion (`WHERE seats > 0`) fires when an UPDATE moves a row into the predicate.*
+
+#### Turn 7. Assistant (Phase 2 plan, condensed)
+> - **Build:** migration `0002_schema` with every table from design §4, the `booking_status` enum, CHECKs, the composite-FK override rule, the `occupancies` exclusion, and the `seats_taken` trigger. Hand-written Kysely types. A password hashing module. An idempotent seed: demo host + "30-min intro" (cap 1) + "Group workshop" (60 min, cap 5) + weekly availability.
+> - **Proposed design changes:**
+>   - `node:crypto` scrypt instead of argon2 (no native build).
+>   - A `timerange` exclusion so overlapping availability windows are rejected by the DB. This closes a known gap.
+>   - Composite FKs so a booking's or occupancy's `host_id` must match its event type's host.
+>   - CHECKs that tie columns to status. These are not a transition guard.
+> - **Tests, highest R first:**
+>   - R4 groundwork: constraints alone reject an overlap and an over-capacity claim.
+>   - R11: seat-invariant helper, used in `afterEach` from now on, plus trigger arithmetic.
+>   - R23 groundwork: refresh-on-zero upsert.
+>   - R24 groundwork: moving to an overlapping occupancy.
+>   - Override/weekday/window constraints, host-consistency FKs, seed idempotency, password hashing.
+> - **Risks:** constraint errors raised inside the trigger, and hand-written types drifting from the schema.
+> - **Questions:** scrypt OK? Demo host slug `demo` in `America/New_York`? Status-consistency CHECKs OK, given your "one status guard" rule?
+>
+> Waiting for "go".
+
+---
+
+<!-- Append new turns below. -->
