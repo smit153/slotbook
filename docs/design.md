@@ -469,16 +469,34 @@ All bodies are JSON (anything else → 415). Every response carries `X-Request-I
 
 ---
 
-## 8. Frontend pages
+## 8. Frontend (as built in Phases 7 + 8)
 
-- `/login`: seeded host (`demo@slotbook.dev`, password from env, default `demo1234`)
-- `/dashboard`: upcoming bookings (cancel with a reason), notifications log
-- `/dashboard/event-types`: list, create, edit
-- `/dashboard/availability`: tz, weekly windows, date overrides (off / custom)
-- `/{host}/{slug}`: tz switcher (defaults to the browser tz), followed by days → slots → hold (countdown) → form → confirmation + manage link
-- `/manage#<token>`: view, reschedule, cancel
+React 19 + react-router 8 (one route table, `src/web/App.tsx`), Luxon for display, one stylesheet (`src/web/styles.css`), no UI library. The API client (`src/web/lib/api.ts`) parses `{error:{code,message}}` into `ApiError`. It retries a **503 once** after `Retry-After`, reusing the same Idempotency-Key; a 503 always means the server rolled back. It never retries a 4xx.
 
-One Idempotency-Key per slot click, reused on retries. The hold secret is kept in memory only.
+**Host dashboard** (`/login`, `/dashboard/*`; `/api/me` → 401 → `/login`). **Every time is shown in the host's home zone, with the zone printed** (`09:00–09:30 EST`).
+- **Bookings:** upcoming bookings grouped by host-local day, with the guest's own zone shown. Cancel requires a reason. A toggle shows past and cancelled bookings, with who cancelled and why.
+- **Event types:** create, edit, activate/deactivate (no delete), and a public link.
+- **Availability:** **one form** for weekly hours and date overrides, saved with **one `PUT`** (atomic replace-all on the server). Rows are checked on the client and highlighted (overlap, end ≤ start, day off with hours, custom with no hours, duplicate date). A server rejection is shown, the server keeps the old availability, and the form keeps the host's edits.
+- **Settings** (name, home zone) and **Notifications** (the sink).
+
+**Guest booking** (`/:host/:slug`):
+- **Zone:** always starts from the **browser's zone**, with a switcher. Nothing is stored in `localStorage`, and aliases are accepted.
+- **Slots:** the next 30 days in that zone, grouped by local day. **Duplicate fall-back times read `01:00 EDT` / `01:00 EST`**, using the server's `ambiguous` flag; other times are plain `09:00`, with the zone printed once.
+- **Picking a slot holds the NEW slot first, and only then releases the old one.** If the new hold fails (409), the guest keeps the slot they had, and nothing is released. A web test covers this; a release-first mutation fails it. Every click gets a fresh Idempotency-Key.
+- **Countdown:** `expires_at − server_now`, counted on `performance.now()`, never the browser's wall clock. The server stays the judge: confirming an expired hold gets 410.
+- **Leaving the page** (`pagehide`) releases the hold with `fetch(..., { keepalive: true })` (best effort).
+- **Confirm:** shows the manage link **`/manage#<token>`**.
+- **Errors:** 409, 410, 429 and 503 each get a plain message, and the slots refresh where useful.
+
+**Manage page** (`/manage#<token>`, token read from the fragment, `<meta name="robots" content="noindex">`):
+- shows the booking in the browser's zone
+- **reschedule** through the same picker (direct `reschedule`, no hold step)
+- **cancel** with an optional reason
+- a started or cancelled booking is read-only, with the reason shown
+
+**Accessibility (basic):** labels on every input, real `ul/li/button` lists for days and times (with accessible names that include the full label and seats left), `aria-pressed` for the selected day and time, and `role="alert"` / `aria-live` for errors and the countdown. A full keyboard and screen-reader audit is the accessibility extension.
+
+**Tests:** a `web` Vitest project (jsdom + Testing Library) whose `fetch` is routed into the **real Fastify app and the real test Postgres** via `app.inject` (with a cookie jar and Origin), so UI tests exercise the real API. Playwright E2E is a separate extension.
 
 ---
 
