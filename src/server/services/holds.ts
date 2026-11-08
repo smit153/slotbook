@@ -10,6 +10,7 @@ import { holdRequestSchema, idempotencyKeySchema } from '../../shared/schemas.js
 import type { Json } from '../db/types.js';
 import { failure, type ServiceResult } from './errors.js';
 import { claimKey, holdRequestHash, storeResponse } from './idempotency.js';
+import { sweepExpiredHolds } from './booking-common.js';
 import { isSlotConflict, lockedNow, writeTx, type Faults } from './tx.js';
 
 const SCOPE = 'hold';
@@ -142,8 +143,7 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
          WHERE client_ip = ${clientIp}::inet AND status = 'held' AND expires_at > ${T}::timestamptz`.execute(trx);
       if ((ip?.n ?? 0) >= ipCap) throw new HoldLimit();
 
-      await sql`UPDATE bookings SET status = 'expired'
-                 WHERE host_id = ${host.id} AND status = 'held' AND expires_at <= ${T}::timestamptz`.execute(trx);
+      await sweepExpiredHolds(trx, host.id, T, 'hold');
 
       const result = await claim(trx, deps, host, eventType, startAt, T, ttlMin, clientIp);
 

@@ -5,7 +5,9 @@ import { loadAvailabilityInput } from '../db/slot-inputs.js';
 import { findOfferedSlot } from '../engine/slots.js';
 import { looksLikeManageToken, manageTokenHash } from '../auth/secrets.js';
 import { rescheduleRequestSchema } from '../../shared/schemas.js';
-import { bookingIdByTokenHash, bookingView, enqueueNotification, lockBooking, recordEvent, type BookingView } from './booking-common.js';
+import {
+  bookingIdByTokenHash, bookingView, enqueueNotification, lockBooking, recordEvent, sweepExpiredHolds, type BookingView,
+} from './booking-common.js';
 import { failure, type ServiceResult } from './errors.js';
 import { assertTransition } from './transitions.js';
 import { isSlotConflict, writeTx, type Faults } from './tx.js';
@@ -61,8 +63,7 @@ export async function rescheduleBooking(deps: RescheduleDeps, token: string, bod
       minNoticeMin: row.min_notice_min, horizonDays: row.horizon_days,
     };
 
-    await sql`UPDATE bookings SET status = 'expired'
-               WHERE host_id = ${host.id} AND status = 'held' AND expires_at <= ${T}::timestamptz`.execute(trx);
+    await sweepExpiredHolds(trx, host.id, T, 'reschedule');
 
     const input = await loadAvailabilityInput(trx, host, eventType,
       { from: newStart, to: new Date(newStart.getTime() + 1) }, { now: T, withOccupancies: false });

@@ -118,3 +118,26 @@ export async function enqueueNotification(
     booking_id: view.id, type, payload: JSON.stringify(payload) as unknown as Json, created_at: occurredAt, next_attempt_at: occurredAt,
   }).execute();
 }
+
+export type ExpiryVia = 'sweeper' | 'hold' | 'reschedule';
+
+/**
+ * held → expired for every hold of `hostId` whose expires_at <= T, with ONE audit row per hold,
+ * in a single statement. Callers hold the host lock and pass the clock read after it (design
+ * §5.5). Used by the sweeper and by the inline sweeps of the hold and reschedule paths, so the
+ * audit trail is complete whoever expires a hold. Returns the number of holds expired.
+ */
+export async function sweepExpiredHolds(trx: Transaction<DB>, hostId: string, T: Date, via: ExpiryVia): Promise<number> {
+  const { rows } = await sql<{ n: number }>`
+    WITH expired AS (
+      UPDATE bookings SET status = 'expired'
+       WHERE host_id = ${hostId} AND status = 'held' AND expires_at <= ${T}::timestamptz
+      RETURNING id
+    ), audited AS (
+      INSERT INTO booking_events (booking_id, type, from_status, to_status, at, payload)
+      SELECT id, 'expired', 'held', 'expired', ${T}::timestamptz, ${JSON.stringify({ via })}::jsonb FROM expired
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM audited`.execute(trx);
+  return rows[0]?.n ?? 0;
+}

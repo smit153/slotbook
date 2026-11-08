@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 import type { Database } from '../db/kysely.js';
 import { DEFAULT_LOCK_TIMEOUT_MS, lockedNow, setLockTimeout } from '../services/tx.js';
+import { sweepExpiredHolds } from '../services/booking-common.js';
 
 /**
  * Hold sweeper (design §3.1). An optimisation only: every read path counts live seats and
@@ -35,13 +36,7 @@ export async function runSweepOnce(db: Database, opts: SweepOptions = {}): Promi
       const got = await sql`SELECT id FROM hosts WHERE id = ${host_id} FOR UPDATE SKIP LOCKED`.execute(trx);
       if (got.rows.length === 0) return null;
       const T = await lockedNow(trx);
-      const r = await trx.updateTable('bookings')
-        .set({ status: 'expired' })
-        .where('host_id', '=', host_id)
-        .where('status', '=', 'held')
-        .where('expires_at', '<=', T)
-        .executeTakeFirst();
-      return Number(r.numUpdatedRows);
+      return sweepExpiredHolds(trx, host_id, T, 'sweeper');
     });
     if (expired === null) result.hostsSkipped += 1;
     else {
