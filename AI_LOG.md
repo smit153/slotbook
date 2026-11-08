@@ -469,4 +469,26 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+#### Turn 19. User
+> Go. Answers: yes, jsdom + app.inject now, Playwright later as an extension. Always start from the browser's time zone, no localStorage. Yes, add the keepalive release on pagehide.
+>
+> One change: when the guest picks a new slot, hold the new one FIRST, then release the old one. If you release first and the new hold gets 409, the guest loses both slots. Add that case to the web tests.
+
+*AI built Phases 7 + 8:*
+- *Installed Testing Library + jsdom.*
+- *Wrote the web lib (API client with one same-key 503 retry, time helpers, monotonic countdown, availability row checks) and a `web` Vitest project whose fetch shim routes into the real Fastify app + Postgres via `app.inject`.*
+- *Wrote the components, the host pages and the guest/manage pages. In self-review it fixed a refetch loop (`onLoaded` in effect deps) before running anything.*
+- *The first guest tests all failed. It debugged by writing to a scratch file (console output was swallowed) and found its own accessibility bug: `role="listitem"` on buttons, which leaves them unnamed. It switched to ul/li/button lists, and all passed.*
+- *Mutation-checked your hold-new-first rule: a release-first version fails the 409 test.*
+- *Rewrote its own flawed "server rejection" test (jsdom sanitised the invalid date, so the client check fired) into a host-lock-busy scenario that also exercises the client's 503 retry.*
+- *Fixed the Fastify FSTDEP024 deprecation.*
+- *Deleted only its own untracked debug test file.*
+- *395/395 tests, green in 3 consecutive runs; build OK; compose image serves every SPA route.*
+- *Committed in 8 steps, rewrote design §8, and wrote `docs/phases/phase-7-8.md`.*
+
+#### Turn 19. Assistant
+> Phases 7 + 8 are done, with one combined summary in `docs/phases/phase-7-8.md`. 395/395 tests pass (138 unit, 226 integration, 31 new web tests against the real API), green in 3 consecutive runs; typecheck, lint and build clean; the production image serves every page. Your changes: hold the new slot first, then release (web test for the 409 case, mutation-checked), the browser zone with no localStorage, the keepalive release on pagehide. Bugs: an accessibility bug in my slot picker (`role="listitem"` on buttons), a refetch loop, my own flawed availability test, a Fastify deprecation. Not done: a real-browser walk-through (that's the Playwright extension). Questions for Phase 9: README contents, one consolidated gaps list, cleanup candidates. Waiting for review.
+
+---
+
 <!-- Append new turns below. -->
