@@ -227,7 +227,7 @@ manage_token = b64url(HMAC-SHA256(APP_SECRET, "manage:v1:" || booking_id))
 - Token revocation and rotation are **known gaps**. `manage_token_version` was dropped because nothing used it.
 
 ### 5.1 Hold: `POST /api/holds` (`Idempotency-Key` required)
-Body `{host, slug, start_at}` → `201 {hold_id, hold_secret, expires_at, server_now}`.
+Body `{host, slug, start_at}` → `201 {hold_id, hold_secret, expires_at, server_now, start_at, end_at}`. The `start_at` and `end_at` are the session's, which may be a live group session's snapshot. Implemented in `src/server/services/holds.ts`.
 ```
 0. Validate the body and the key format (8–128 chars) → 400, before any txn, not cached.
 BEGIN
@@ -275,7 +275,11 @@ Why it can't deadlock:
 - A concurrent duplicate idempotency key waits on the key row *before* taking any other lock. The transaction it waits for never needs a lock the waiter holds.
 - The sweeper never waits: `SKIP LOCKED` on the host row.
 
-**Idempotency caching:** 201 / 409 / 422 `SLOT_NOT_OFFERED` are cached; they are terminal answers for this intent. 400 / 422 key-reused / 429 / 5xx are not cached. A 5xx rolls back the key row, so a retry re-executes.
+**Idempotency caching:** 201 / 409 / 422 `SLOT_NOT_OFFERED` are cached; they are terminal answers for this intent. 400 / 404 / 422 key-reused / 429 / 5xx are not cached. A 5xx rolls back the key row, so a retry re-executes. A replayed 201 re-derives `hold_secret` and carries the **current** `server_now`, so the countdown stays right; the stored body has neither. The request hash normalises `start_at` to UTC, so the same instant written with a different offset counts as the same request.
+
+**Why the host lock is the primary guard (Phase 4 finding).** With the lock bypassed (R4), parallel claims on *different but overlapping* sessions each wait on the other's uncommitted row inside the exclusion check, and Postgres aborts one as a deadlock victim (40P01) after `deadlock_timeout`. There is still never a double booking, but it is slow (seconds) and the errors are noisy. Holding the host lock first serialises claims per host, so the exclusion check never races.
+
+**Client IP:** IPv4-mapped IPv6 (`::ffff:a.b.c.d`) is normalised to IPv4 before the cap and storage.
 
 **Refresh-on-zero (one rule):** *when a claim reuses an occupancy that has 0 seats, its capacity, end and buffers are overwritten from the current event type. A session with ≥1 seat keeps its snapshot.*
 
