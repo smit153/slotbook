@@ -291,4 +291,25 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 5: Phase 3 follow-up, Phase 4 plan
+
+#### Turn 11. User
+> Great phase. Answers: use the first occurrence for ambiguous window ends too (shorter, never offers time the host didn't mean) and document it. GMT±n labels are fine. 30×24h horizon is fine as a documented assumption.
+
+*AI changed the fall-back tests first: "window ending at 01:30" now expects `00:00, 00:30, 01:00 EDT`, plus a new `01:00–01:30` → `01:00 EDT` case. Both failed against the old `'later'` end. Then a one-line engine change made both boundaries take the first occurrence, and all 197 tests pass. Design §6 and assumptions 3/3a/3b (first occurrence, 30×24 h horizon, `GMT±n` labels) were updated, and a post-review note was added to `phase-3.md`. Commits `5d0d576`, `ca3fd4f`.*
+
+#### Turn 11. Assistant (Phase 4 plan, condensed)
+> - **Done:** ambiguous window ends now take the first occurrence (test-first; 197/197). Assumptions documented.
+> - **Phase 4 plan, holds + idempotency:**
+>   - `createHold` service following design §5.1: idempotency-key claim → IP advisory lock + cap → host `FOR UPDATE` → sweep → rule re-validation (engine with no occupancies, so taken slots surface as 409 from the constraints, not 422) → SAVEPOINT claim → store the response without the secret.
+>   - HMAC hold secret, re-derived on replay.
+>   - Concurrency test written FIRST against a naive check-then-insert service, committed red on purpose, then made green.
+> - **Tests:** R1, R2, R3, R4 (parallel), R5, R8, R13 (fault before COMMIT), R18, R19, R20 (no secret at rest), R22, R23, with the invariant after every test.
+> - **Risks:** `now()` is the txn start under lock contention, pool size, advisory-lock hash collisions, the IP cap interfering with concurrency tests.
+> - **Question:** OK to have one intentionally red commit in history?
+>
+> Waiting for "go".
+
+---
+
 <!-- Append new turns below. -->
