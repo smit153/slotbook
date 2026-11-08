@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { sql, type Transaction } from 'kysely';
 import type { Database } from '../db/kysely.js';
 import type { DB } from '../db/types.js';
@@ -25,6 +26,8 @@ export interface HoldDeps {
   appSecret: string;
   /** Hold lifetime in minutes (brief: 5). */
   holdTtlMin?: number;
+  /** Max live (unexpired) holds per client IP across all hosts (design §5.1 step 4). */
+  ipHoldCap?: number;
   faults?: HoldFaults;
 }
 
@@ -46,8 +49,19 @@ export interface HoldCreated {
 }
 
 const DEFAULT_HOLD_TTL_MIN = 5;
+const DEFAULT_IP_HOLD_CAP = 3;
 
 class Gone extends Error {}
+/** Thrown inside the transaction so it ROLLS BACK: a 429 must not be stored for the key. */
+class HoldLimit extends Error {}
+
+/** IPv4-mapped IPv6 (::ffff:1.2.3.4) is the same client as 1.2.3.4. */
+export function normalizeIp(ip: string): string | null {
+  const v = ip.trim().toLowerCase();
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(v);
+  const out = mapped ? mapped[1]! : v;
+  return isIP(out) ? out : null;
+}
 
 interface Target {
   host: HostRef;
@@ -101,6 +115,9 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
   if (!parsed.success) return failure(400, 'VALIDATION', 'host, slug and start_at (RFC 3339 instant) are required');
   const key = idempotencyKeySchema.safeParse(req.idempotencyKey);
   if (!key.success) return failure(400, 'IDEMPOTENCY_KEY_INVALID', 'Idempotency-Key header must be 8–128 visible ASCII characters');
+  const clientIp = normalizeIp(req.clientIp);
+  if (!clientIp) return failure(400, 'VALIDATION', 'Could not determine the client address');
+  const ipCap = deps.ipHoldCap ?? DEFAULT_IP_HOLD_CAP;
   const startAt = new Date(parsed.data.start_at);
   const ttlMin = deps.holdTtlMin ?? DEFAULT_HOLD_TTL_MIN;
 
@@ -116,14 +133,22 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
       }
       if (claimed.kind === 'replay') return replay(trx, deps, claimed.status, claimed.body);
 
+      // 2. IP lock, then 3. host lock — the global lock order (design §5.1).
+      await sql`SELECT pg_advisory_xact_lock(1, hashtext(${clientIp}))`.execute(trx);
       const { host, eventType } = await lockTarget(trx, target);
       await deps.faults?.afterHostLock?.();
       const T = await lockedNow(trx);
 
+      // 4. Per-IP cap, counted with the locked clock across ALL hosts.
+      const { rows: [ip] } = await sql<{ n: number }>`
+        SELECT count(*)::int AS n FROM bookings
+         WHERE client_ip = ${clientIp}::inet AND status = 'held' AND expires_at > ${T}::timestamptz`.execute(trx);
+      if ((ip?.n ?? 0) >= ipCap) throw new HoldLimit();
+
       await sql`UPDATE bookings SET status = 'expired'
                  WHERE host_id = ${host.id} AND status = 'held' AND expires_at <= ${T}::timestamptz`.execute(trx);
 
-      const result = await claim(trx, deps, host, eventType, startAt, T, ttlMin, req.clientIp);
+      const result = await claim(trx, deps, host, eventType, startAt, T, ttlMin, clientIp);
 
       // Terminal business outcomes (201 / 409 / 422) are stored for the key — without the secret.
       await storeResponse(trx, SCOPE, key.data, result.status, storable(result));
@@ -133,6 +158,9 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
     });
   } catch (err) {
     if (err instanceof Gone) return failure(404, 'NOT_FOUND', 'Unknown host or event type');
+    if (err instanceof HoldLimit) {
+      return failure(429, 'HOLD_LIMIT', `At most ${ipCap} slots can be held at once; finish or let one expire first`);
+    }
     throw err;
   }
 }
