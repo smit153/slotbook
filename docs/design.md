@@ -226,7 +226,26 @@ BEGIN
 7. UPDATE idempotency_keys SET response_status, response_body (no secret)
 COMMIT
 ```
-**Lock order** everywhere is IP lock, then host row, then booking rows.
+**Lock order.** Every path takes locks in this global order and may skip steps, but never goes backwards:
+
+```
+idempotency key row → IP advisory lock → host row (FOR UPDATE) → booking rows → occupancy rows (via trigger)
+```
+
+| Path | Key | IP | Host | Booking | Occupancy |
+|---|---|---|---|---|---|
+| Hold | ✓ | ✓ | ✓ | sweep + insert | trigger |
+| Confirm | – | – | ✓ | `FOR UPDATE` | trigger (on expire) |
+| Reschedule | – | – | ✓ | `FOR UPDATE` | trigger (old, then new) |
+| Cancel (guest/host) | – | – | ✓ | `FOR UPDATE` | trigger |
+| Sweeper | – | – | ✓ `SKIP LOCKED` | update | trigger |
+
+Why it can't deadlock:
+- **Every writer of a host's bookings and occupancies holds that host's row lock first**, so at most one writer per host is past step 3 at a time. Booking and occupancy locks are taken only by that one writer. The R4 test bypasses this on purpose, and there the constraints are the guard.
+- A transaction locks **one host only**, so there is no host-to-host cycle.
+- **Only the hold path takes the IP lock**, and it takes it *before* the host lock. Nothing that holds a host lock ever waits for an IP lock.
+- A concurrent duplicate idempotency key waits on the key row *before* taking any other lock. The transaction it waits for never needs a lock the waiter holds.
+- The sweeper never waits: `SKIP LOCKED` on the host row.
 
 **Idempotency caching:** 201 / 409 / 422 `SLOT_NOT_OFFERED` are cached; they are terminal answers for this intent. 400 / 422 key-reused / 429 / 5xx are not cached. A 5xx rolls back the key row, so a retry re-executes.
 
@@ -422,7 +441,12 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 8. **If the host changes time zone, existing bookings keep their UTC instants.** Only future slot generation uses the new tz. The same applies to availability edits.
 9. Hold = 5 min. Confirm replay window = 15 min. Per-IP active-hold cap = 3. All are config constants.
 10. One host per account. The host slug is public. "Next 30 days" is the guest UI default, capped by the horizon.
-11. The client IP comes from `X-Forwarded-For` only behind a trusted proxy (`trustProxy` in prod).
+11. **Client IP and `TRUST_PROXY`.** `client_ip` is Fastify's `request.ip`, controlled by the `TRUST_PROXY` env var:
+    - `false` (default, local and compose): `X-Forwarded-For` is ignored, and the IP is the socket peer.
+    - `1` on Render (exactly one proxy hop): the proxy is trusted, and the client is the address it appended to `X-Forwarded-For`. Any addresses a client prepends itself are ignored.
+    - `true` (trust every hop) is **rejected by config validation**. It would let any client spoof `X-Forwarded-For` and bypass the per-IP hold cap.
+
+    Tested in `test/unit/trust-proxy.test.ts`, including a spoofed-header case.
 
 ---
 
