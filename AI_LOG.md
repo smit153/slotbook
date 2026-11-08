@@ -247,4 +247,29 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 4: Phase 3 (slot engine)
+
+#### Turn 9. User
+> Good phase. Answers: purge job goes to known gaps. Keep timezone validation in the API with Intl.supportedValuesOf, and confirm no SQL uses AT TIME ZONE with the host tz; all tz math stays in Luxon. Moving the upsert to Phase 2 is fine.
+>
+> Two rules from now on:
+> - Never run destructive commands (docker compose down -v, rm -rf, git reset --hard, force push, dropping DBs) without asking me first.
+> - Since bookings can't be deleted, event types and hosts must be deactivated, not deleted. Add that to the design and make sure no FK cascades into bookings.
+>
+> For the Phase 3 plan, include: the NY host / Berlin guest test for Oct 25–Nov 1, the cross-day test (Berlin guest's Tuesday includes the NY host's Monday evening), both 01:00 slots on fall-back night, and 'now' passed in from the DB, never read in the engine.
+
+*AI grepped `src/`, `scripts/` and `test/` for `AT TIME ZONE`, `timezone()`, `::date`, `date_trunc`, `extract`, `to_char`, `current_date` and `localtime`, and found none. It listed every FK's ON DELETE action from `pg_constraint` (briefly starting and then stopping the Compose DB): nothing cascades into bookings. It probed Luxon 3.7 in a scratch folder and found that ambiguous fall-back times resolve to the LATER offset, the opposite of what design v0.3 said. It saved the destructive-commands rule to memory and updated `docs/design.md`: deactivate-not-delete with the FK table, no SQL tz math, DST boundary resolution (start → earlier, end → later via `getPossibleOffsets`), and the purge job under known gaps (`a22e20c`).*
+
+#### Turn 9. Assistant (Phase 3 plan, condensed)
+> - **Confirmed:** no SQL tz math anywhere. No FK cascades into bookings (catalog table now in design §4.2).
+> - **Design fix:** Luxon picks the later offset for ambiguous times, not the earlier one. The engine resolves window start → earlier and end → later.
+> - **Step 0 (deactivate rule):** migration 0003 adds `hosts.active` and DELETE-block triggers on hosts and event_types, plus a catalog test that no FK cascades towards bookings. Types regenerated.
+> - **Engine:** pure `generateSlots()` + `isSlotOffered()` in `src/server/engine/`, taking `now` as input. A DB loader reads `now()`, the rules, the overrides and live occupancies in one read. The ESLint clock rule is extended to Luxon's `DateTime.now()/local()`.
+> - **Tests:** R12 (NY/Berlin Oct 23/26/Nov 2, cross-day, both 01:00 slots, spring gap), R7 (expired-unswept hold doesn't block, at the loader), R8 groundwork, R14 groundwork (faked JS clock changes nothing), occupancy conflicts, overrides, a no-SQL-tz scan.
+> - **Risks:** `getPossibleOffsets` needs Luxon ≥ 3.5, invalid zones, horizon semantics.
+>
+> Waiting for "go".
+
+---
+
 <!-- Append new turns below. -->
