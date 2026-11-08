@@ -355,4 +355,32 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 8: Phase 5 (confirm, cancel, reschedule, release, sweeper)
+
+#### Turn 14. User
+> Go, with these:
+> - Add a hold release: POST /api/holds/{id}/release with hold_secret, held → expired, frees the seat. Otherwise a guest who clicks 4 slots hits the 3-hold IP cap. The UI will release the previous hold when a new slot is picked. Add a test: hold 3, release 1, a 4th hold succeeds.
+> - Cancel notification payload includes cancelled_by and reason.
+> - Started bookings: refuse reschedule/cancel for guest AND host once start_at ≤ T (the brief only asks for cancelling upcoming bookings). No-show tracking goes to known gaps.
+> - Confirm match: trimmed name + case-insensitive email is fine. Same event type only for reschedule is fine.
+> - R25 stays on the "if time" list.
+> - Since you're mapping errors here anyway: 40P01 / 40001 should get one automatic retry, then 503, never a raw 500.
+
+*AI built Phase 5:*
+- *Transition table + HMAC manage tokens.*
+- *`writeTx`: every write path sets `lock_timeout`, retries 40P01/40001 once, then returns 503. Tested via fault hooks, including just before COMMIT.*
+- *Release service; your "hold 3, release 1, 4th succeeds" test passes.*
+- *Confirm. A first test failure showed `z.email()` rejecting padded input before trimming; the schema now trims first. A mutation (`T := now()`) proved confirm would otherwise accept a hold that expired while it waited for the lock.*
+- *While writing confirm, the AI found that this Node/ICU's `Intl.supportedValuesOf('timeZone')` contains `Asia/Calcutta` but not `Asia/Kolkata` or `UTC`. Guests are validated with `Intl.DateTimeFormat`; host validation is raised as a question for Phase 6.*
+- *Cancel (guest/host, `cancelled_by` + reason in the payload, started bookings refused for both).*
+- *Reschedule (no-op retry, `SAVEPOINT move`, same event type).*
+- *Sweeper (per host `SKIP LOCKED`, 24 h key purge, wired into the server).*
+- *Cross-cutting tests (R14 full journey ±1 year, R20 across all tables, R27, 503 on every path).*
+- *309/309, green in 3 consecutive runs. Design updated; `docs/phases/phase-5.md` written.*
+
+#### Turn 14. Assistant
+> Phase 5 is done. 309/309 tests pass (135 unit, 174 integration), stable across 3 runs; typecheck, lint and types clean. All your changes are in: release (your test passes), `cancelled_by` + reason in the payload, started bookings frozen for guest and host (no-shows → known gaps), 40P01/40001 retried once then 503. Confirm's stale-clock case is mutation-checked. Notifications are exactly-once under concurrency. R14 holds across a full journey with the clock ±1 year; R20 across all tables. Bugs: `Intl.supportedValuesOf` lacks `Asia/Kolkata`/`UTC` here, the email trim order, a hanging (expected) red test, a misnamed variable. Questions: host tz validation rule, sweeper audit events, Phase 6 scope. Waiting for review.
+
+---
+
 <!-- Append new turns below. -->
