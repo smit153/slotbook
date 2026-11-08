@@ -442,4 +442,31 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 11: Phases 7 + 8 (host dashboard, guest booking + manage)
+
+#### Turn 18. User
+> Yes to all three: plain React with react-router and one small CSS file; a single availability form saved in one request with inline errors; dashboard times in the host's time zone with the zone shown.
+>
+> Do Phase 7 (host dashboard) and Phase 8 (guest booking + manage pages) together. Write one combined plan, wait for my go, then a single summary at the end.
+
+#### Turn 18. Assistant (combined Phase 7 + 8 plan, condensed)
+> - **Shell:** react-router 8 data router, a typed `api.ts` (JSON errors → typed `ApiError`; one automatic retry on 503 honouring Retry-After, with the SAME Idempotency-Key; never retried on 4xx), Luxon time helpers, one `styles.css`.
+> - **Host (Phase 7):**
+>   - login, and a guarded layout (`/api/me` → redirect)
+>   - bookings: upcoming grouped by host-local day, every time printed with its zone, cancel with a required reason
+>   - event types: create, edit, activate/deactivate, public link
+>   - availability: ONE form with client-side checks per row (overlap, end ≤ start, day off with hours, duplicate date) and the server's code shown inline; one PUT
+>   - settings (picker from `/api/host/settings`), notifications log
+> - **Guest (Phase 8):**
+>   - `/:host/:slug`: tz switcher (browser default, aliases OK); 30 days of slots grouped by local day; **duplicate fall-back times shown as "01:00 EDT" / "01:00 EST"** using the server's `ambiguous` flag; seats left for group events
+>   - picking a slot releases the previous hold, then holds with a fresh key per click; the countdown uses the server's `expires_at − server_now`, not the browser clock
+>   - confirm → manage link `/manage#token`; 409/410/429/503 each get a clear message plus a slot refresh
+> - **Manage (`/manage#token`):** view in the guest's tz, reschedule via the same picker, cancel with an optional reason; started/cancelled bookings shown read-only.
+> - **Tests:** pure logic unit tests (time/labels, grouping, countdown, availability checks, API client retry), plus a new `web` Vitest project (jsdom + Testing Library) whose `fetch` is routed into the REAL Fastify app + Postgres via `app.inject`, covering login → dashboard, the availability errors, a full guest booking, EDT/EST rendering, and the manage page.
+> - **Questions:** this test approach vs. Playwright (stays "if time"); remember the guest tz in localStorage?; best-effort hold release on page leave (`fetch keepalive`)?
+>
+> Waiting for "go".
+
+---
+
 <!-- Append new turns below. -->
