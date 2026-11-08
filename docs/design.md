@@ -236,19 +236,22 @@ BEGIN
        hash differs    → 422 IDEMPOTENCY_KEY_REUSED (not stored)
        stored response → replay (re-derive hold_secret if it was a 201)
      ROLLBACK and return.
-2. pg_advisory_xact_lock(hashtext('ip:' || client_ip)); live holds for the IP ≥ 3 → ROLLBACK → 429, not cached.
-3. SELECT ... FROM hosts WHERE id = $host FOR UPDATE
-4. Sweep the host's expired holds (the trigger frees seats).
-5. Re-validate start_at with the slot engine (now = DB now()) → outcome 422 SLOT_NOT_OFFERED.
-6. SAVEPOINT claim
+2. pg_advisory_xact_lock(1, hashtext(client_ip))            -- IP lock
+3. SELECT ... FROM hosts WHERE id = $host FOR UPDATE         -- host lock
+   T := (SELECT clock_timestamp())                           -- read the clock ONCE, after all locks
+4. live holds for the IP (expires_at > T) ≥ 3 → ROLLBACK → 429, not cached.
+5. Sweep: held AND expires_at <= T → expired (the trigger frees seats).
+6. Re-validate start_at against the host's RULES with the engine (now = T, existing sessions
+   ignored, so a taken slot surfaces as 409 from the constraints, not as 422) → 422 SLOT_NOT_OFFERED.
+7. SAVEPOINT claim
      upsert occupancy with refresh-on-zero:
        INSERT ... ON CONFLICT (event_type_id, start_at) DO UPDATE
          SET capacity = EXCLUDED.capacity, end_at = EXCLUDED.end_at, blocked = EXCLUDED.blocked
          WHERE occupancies.seats_taken = 0
        (no row returned → a live session: reuse its snapshot via SELECT id)
-     INSERT booking(status='held', expires_at = now() + interval '5 min', client_ip)  -- trigger: seats + 1
+     INSERT booking(status='held', expires_at = T + interval '5 min', client_ip)  -- trigger: seats + 1
    23P01 / 23514 → ROLLBACK TO SAVEPOINT claim; outcome = 409 SLOT_UNAVAILABLE
-7. UPDATE idempotency_keys SET response_status, response_body (no secret)
+8. UPDATE idempotency_keys SET response_status, response_body (no secret)
 COMMIT
 ```
 **Lock order.** Every path takes locks in this global order and may skip steps, but never goes backwards:
@@ -295,7 +298,12 @@ Guest: `POST /api/bookings/{token}/cancel` `{reason?}`. Host: `POST /api/host/bo
 `confirmed → cancelled` (the trigger frees the seat) → outbox `booking.cancelled`. If already cancelled → 200 with no write and no notification.
 
 ### 5.5 Clock policy
-- **Postgres `now()` is the only clock** for expiry, min notice, horizon, "upcoming" and the slot engine's `now`. The slots route reads `now()` from the DB and passes it into the pure engine.
+- **The database is the only clock** for expiry, min notice, horizon, "upcoming" and the slot engine's `now`.
+- **Write paths read the clock once, after acquiring their locks.** They run `T := clock_timestamp()` as a separate statement right after the host lock (and the booking row lock, where taken), and use `T` for the sweep, `expires_at`, every expiry check, the IP-cap count and the engine's `now`. They never use `now()`, which is the transaction's *start* time.
+  - Why: under contention a transaction can wait seconds for the host lock, and `now()` would then be stale. Example: an old hold expires at T₀+1 s, and a new hold's transaction starts at T₀ and waits 2 s for the lock. With `now()` = T₀ the sweep misses the expired hold, and the guest gets a wrong 409. In confirm, the same bug would accept a hold that expired during the wait.
+  - Test: `holds-clock.test.ts` blocks the host lock until an existing hold has expired, and asserts the waiting hold gets 201.
+  - This was caught in review of the Phase 4 plan; the plan had wrongly called the stale `now()` "consistent".
+- The read path (`GET …/slots`) takes no locks, so `now()` of its read-only snapshot is fine there.
 - **Service and engine code never read the JS clock.** An ESLint `no-restricted-syntax` rule bans `Date.now()` and argument-less `new Date()` under `src/server/{services,engine}`. The only exceptions are logging and metrics.
 - The client never sends its clock. The UI countdown uses `expires_at − server_now` from the response.
 - **No time-zone math in SQL.** No `AT TIME ZONE`, `timezone()`, `::date` on a timestamptz, `date_trunc` or `extract` on local time, and Postgres's tz database is never consulted for host or guest zones. SQL compares UTC instants only. All wall-clock and zone math happens in Luxon (one tz database, Node's ICU). A unit test scans `src/` for these constructs.
