@@ -40,12 +40,12 @@ Also covers the follow-up after Phase 4: `SET LOCAL lock_timeout` → 503 (`cc3a
 ## Design decisions made while building (now in `docs/design.md`)
 - **Release writes no notification.** The host never saw the hold, so nothing changed from their point of view. It does write a `released` audit event.
 - **A retried reschedule to the booking's current slot returns 200 even after it has started.** The no-op check runs before the started check, because a pure retry should never fail.
-- **Sweeper expiries write no audit event per hold**, to keep the bulk update cheap. Expiries via confirm (410) and via release are audited. See open question 2.
+- ~~Sweeper expiries write no audit event per hold~~ → **changed after review:** every expiry is audited (`6d6c2a0`).
 - **The confirm replay ignores `tz`**, matching only name and email, as agreed.
 
 ## Test results
 ```
-pnpm test → Test Files 39 passed (39) · Tests 309 passed (309) · ~53 s · 3 consecutive green runs
+pnpm test → Test Files 35 passed (35) · Tests 309 passed (309) · ~53 s · 3 consecutive green runs
   unit        135  (+ transitions 6, manage tokens 3)
   integration 174  confirm 12 · cancel 9 · reschedule 9 · holds-release 6 · cross-cutting 6
                    sweeper 5 · write-tx 5 · holds-lock-timeout 3 · (earlier 119)
@@ -83,7 +83,10 @@ add12b0 docs: release, confirm/reschedule/cancel details, writeTx retry policy, 
 (+ this summary and AI_LOG)
 ```
 
-## Open questions
+## Corrections after review
+- This summary first said "Test Files 39". The real count was **35**; I wrote the figure without checking it. The test count (309) was correct.
+
+## Open questions (answered: Intl+Luxon zones, audit rows added)
 1. **Validating the host time zone (Phase 6).** Strict `Intl.supportedValuesOf` membership rejects `Asia/Kolkata` and `UTC` on this runtime. I propose: **accept any zone that `Intl.DateTimeFormat` and Luxon both accept, and store the exact string the host chose.** The picker lists `supportedValuesOf` plus `UTC` and the common modern names. Is that OK, or do you want strict membership with that caveat documented?
 2. **Audit events for sweeper expiries.** Should the sweeper also write one `expired` `booking_events` row per hold (an `INSERT … SELECT` in the same transaction, cheap), so the audit trail is complete? I'd add it in Phase 6 unless you say no.
 3. **Phase 6 scope check:** routes for everything above, plus host auth (seeded login, session cookie), host CRUD under the host lock, security headers and log redaction (design §5.7), the `Idempotency-Replayed` and `Retry-After` headers, and errors mapped to the codes in §7. Anything to add or cut before I write the plan?

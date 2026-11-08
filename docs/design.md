@@ -192,7 +192,7 @@ Overlapping windows within a weekday or date are **rejected by the DB**. A custo
 - If OLD was active on occupancy A, decrement A. Then, if NEW is active on occupancy B, increment B. The decrement comes first, so a reschedule that moves to an overlapping time works.
 - The increment fires the `CHECK` and the `EXCLUDE`. A violation raises 23514 or 23P01, and the service maps it to 409.
 
-Besides the delete block, this is the only trigger. **The status guard lives in one place**, the service's `transition(from, to)` table, used by every write path. The sweeper's SQL only ever does `held → expired`, via `WHERE status='held'`.
+Besides the delete block, this is the only trigger. Every `held → expired` transition, whether by the sweeper, an inline sweep in hold or reschedule, confirm (410) or release, writes one `booking_events` row (`payload.via` says which). **The status guard lives in one place**, the service's `transition(from, to)` table, used by every write path. The sweeper's SQL only ever does `held → expired`, via `WHERE status='held'`.
 
 ### 4.2 Deactivate, never delete
 Bookings can't be deleted (append-only), so nothing they depend on may disappear either:
@@ -396,7 +396,8 @@ for each host-local date D in [dFirst, dLast]:
   WHERE o.host_id = $1 AND o.blocked && tstzrange($from, $to)
   GROUP BY o.id HAVING count(...) > 0
   ```
-- The API returns UTC ISO plus a `local` label in the requested `tz`. The UI groups by day in the guest's tz. `tz` values are validated against `Intl.supportedValuesOf('timeZone')`.
+- The API returns UTC ISO plus a `local` label in the requested `tz`. The UI groups by day in the guest's tz.
+- **Time-zone validation (decided after Phase 5).** A zone (host, guest or `?tz=`) is accepted if **both `Intl.DateTimeFormat` and Luxon accept it**, and the exact string chosen is stored. Strict `Intl.supportedValuesOf('timeZone')` membership was rejected: on Node 26/ICU that list contains `Asia/Calcutta` but **not `Asia/Kolkata`** (the brief's own example) and not `UTC`. The list is still used to fill the time-zone pickers, with `UTC` and modern names such as `Asia/Kolkata` added. Browser aliases are accepted the same way.
 
 ### 6.1 Worked DST example (also the R12 test)
 Host in **America/New_York**, Mon–Fri 09:00–17:00. Guest in **Europe/Berlin**.
