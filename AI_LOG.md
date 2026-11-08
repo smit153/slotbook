@@ -12,6 +12,8 @@ How AI was used to build Slotbook. The brief asks for key prompts, where the AI 
 1. **Design first, no code.** I gave the AI the brief PDF and asked for a design doc. I told it not to write code until I approved the design.
 2. **Several review rounds.** I reviewed each version of `docs/design.md`, answered its open questions, and pushed back on specific flaws. It revised the doc each time, and each version was committed (v0.1 → v0.2 → v0.3).
 3. **Small commits, never squashed.**
+4. **Phased build with a review gate.** There are 9 phases. Before each one the AI writes a short plan and waits for my "go". After each one it writes `docs/phases/phase-N.md` (planned vs. actual, bugs, test counts, commits, open questions) and waits for my review.
+5. **This log is updated on every message**, without me having to ask.
 
 ### Key prompts
 - "check slotbook.pdf … create a design doc how you will create all the parts … once I give go ahead then only start coding"
@@ -37,6 +39,11 @@ How AI was used to build Slotbook. The brief asks for key prompts, where the AI 
 | 13 | A retried reschedule to the same slot would have sent a second notification, and the dispatcher wasn't safe with multiple instances. | v0.2 | me | Pure no-op reschedule. `FOR UPDATE SKIP LOCKED` + lease, with at-least-once delivery. |
 | 14 | **Scope creep.** The design had grown well past the 4–5h core: an unused `manage_token_version` column, two status guards, and 25 unranked reliability cases. | v0.2 | me | A cut list (core / if time / known gaps), the column and the second guard dropped, and the cases ranked. |
 | 15 | The DST example used a NY host and an India guest. That misses the more interesting week when Europe and the US switch on different dates. | v0.1–v0.2 | me | NY host and Berlin guest, Oct 23 – Nov 2 2026, when the gap is 5h instead of 6h. |
+| 16 | Installed TypeScript "latest" (7.0), which has no JS compiler API, so typescript-eslint (`<6.1`) breaks. The plan's risk list missed it. | Phase 1 | AI (lint/typecheck) | Pinned `typescript@~6.0`. |
+| 17 | Imported Kysely's `Migrator` from `kysely`. Kysely 0.29 moved it to `kysely/migration`. | Phase 1 | AI (tsc) | Fixed the import path. |
+| 18 | Passed a numeric `trustProxy` to Fastify. The runtime accepts it but the types don't. | Phase 1 | AI (tsc) | Hop-count function `(addr, hop) => hop < n`, unit-tested. |
+| 19 | The Phase 1 plan ordered the server commit before the DB layer it depends on. | Phase 1 | AI | Swapped the commit order. |
+| 20 | The design doc's lock order left out the idempotency-key row and the occupancy rows, and didn't say which paths skip the IP lock. `trustProxy` was only "`trustProxy` in prod". | v0.3 | me (asked to confirm before Phase 4) | Global lock order + per-path table + deadlock argument. `TRUST_PROXY` = false / hop count, never `true`. |
 
 ### What I decided or changed by hand
 - Stack: Kysely instead of plain SQL or Prisma.
@@ -45,6 +52,8 @@ How AI was used to build Slotbook. The brief asks for key prompts, where the AI 
 - Assumptions: slot step = duration. Buffers may fall outside the window. Min notice is checked at hold time only. Bookings keep their UTC times when the host changes time zone.
 - `pnpm test` must start its own test DB.
 - Git: small commits, never squashed, no co-author trailer.
+- Process: 9 phases with plan → "go" → build → phase summary → review. The concurrency test must be written first and seen to fail (Phase 4). Fall-back duplicate slots must be labelled EDT/EST (Phase 8).
+- AI_LOG must be kept up to date on every message.
 
 ---
 
@@ -172,6 +181,74 @@ User messages are verbatim, typos included. Assistant replies are the final mess
 > also save all the conveestion we had in ai log.md file just like pdf asked to keep transipt of this chat
 
 *AI created this `AI_LOG.md` (summary + transcript) and committed it.*
+
+---
+
+#### Turn 4. Assistant
+> `AI_LOG.md` has the whole conversation, committed as `3110a10` (plus `de48e0a`, a note that my replies are lightly condensed). It has a summary (how we worked, key prompts, 15 design mistakes caught in review, your own decisions) and a raw-transcript appendix with your messages word for word. I'll append each new session. Say "go" when you've reviewed v0.3.
+
+---
+
+### Session 2: Phase 1 (scaffold)
+
+#### Turn 5. User
+> Go, with a way of working: we build in phases, and I review each one before the next.
+>
+> Phases:
+> 1. Scaffold: pnpm, Fastify, Vite, Kysely, docker compose, migrations, and pnpm test starting its own DB
+> 2. Schema, constraints, seat-counter trigger, seed
+> 3. Slot engine (pure) + unit tests including DST
+> 4. Holds + idempotency. Write the concurrency test first and let it fail, then implement
+> 5. Confirm, cancel, reschedule, outbox, sweeper + their tests
+> 6. API routes + auth
+> 7. Host dashboard UI
+> 8. Guest + manage UI (label duplicate fall-back slots with EDT/EST)
+> 9. README, cleanup, gaps list
+>
+> Before each phase, write a short plan: what you'll build, how, which files, which tests (highest-ranked R cases first), and any risks. Then stop and wait for my "go".
+>
+> After each phase, write a summary to docs/phases/phase-N.md and show it to me:
+> - what you planned vs. what you actually did
+> - what worked and what didn't
+> - bugs you found, including mistakes in your own code or in the design doc
+> - test results (pass/fail counts)
+> - the commits you made
+> - anything that changed from the design, and open questions
+> Then stop and wait for me.
+>
+> Rules: small commits inside each phase, no co-author line, never squash, all tests green before you end a phase. Also confirm the IP-lock → host-lock order and the trustProxy setting are in the design doc before Phase 4.
+
+*AI checked the toolchain (Node 26, pnpm 12.18, Docker 29), grepped the design doc for the lock order and trustProxy, and saved the phase workflow to its memory.*
+
+#### Turn 5. Assistant (Phase 1 plan, condensed)
+> - **Pre-Phase-4 check:** both points are in the doc, but too vague. The lock order doesn't say which paths skip the IP lock, and trustProxy only says "`trustProxy` in prod". I'll add a `TRUST_PROXY` env var: `false` by default, `1` on Render, `true` rejected.
+> - **What I'll build:** `docker compose up` (PG16 → migrate → seed stub → serve API + SPA). `pnpm dev` (API in watch mode + Vite with `/api` forwarded). `pnpm test` (Testcontainers, or `TEST_DATABASE_URL`).
+> - **How:** a single ESM package, compiled with `tsc`, no bundler. A static Kysely migration list. Migration 0001 enables `btree_gist`. Env validated with zod. A `buildApp()` factory. Vitest unit and integration groups. ESLint clock rule from day one.
+> - **Tests:** health against real PG, migrations idempotent, `btree_gist`, bad config fails fast. No R cases yet.
+> - **8 planned commits.**
+> - **Risks:** Node 26 vs Node 24 in Docker, pnpm 12 blocking build scripts, Testcontainers Ryuk on WSL2, the 60-connection pool for Phase 4.
+> - **Questions:** gitignore the PDF? Postgres 16 / Node 24 OK?
+>
+> Waiting for your "go".
+
+#### Turn 6. User
+> go
+
+*AI scaffolded the project. `pnpm add` installed TypeScript 7, which typescript-eslint can't use, so the AI pinned 6.0.3. It approved only esbuild's build script.*
+
+#### Turn 6. User (sent mid-turn)
+> keep on updating ai log dont wait for me to ask you on every msg update it
+
+*AI saved this rule to memory, and this log is now updated as each message arrives. It continued Phase 1:*
+- *config and DB layer. It fixed the Kysely 0.29 `kysely/migration` import.*
+- *app and `/health`. It fixed the numeric-`trustProxy` typing with a hop-count function.*
+- *web placeholder, Dockerfile and compose. A real `docker compose up` was verified: migrate → seed → `/health` 200, SPA served, restart idempotent. `pnpm dev` was verified through the Vite proxy.*
+- *Vitest + Testcontainers: 23/23 pass, the same with `TEST_DATABASE_URL`, and from a fresh clone.*
+- *design doc: explicit lock-order table and `TRUST_PROXY`.*
+- *`docs/phases/phase-1.md` written.*
+
+#### Turn 6. Assistant
+> Phase 1 is done. Summary in `docs/phases/phase-1.md`: 23/23 tests, 7 commits plus a docs commit, 5 of my own bugs and 2 design-doc gaps found. Three open questions. Waiting for review before Phase 2.
 
 ---
 
