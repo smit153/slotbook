@@ -19,3 +19,21 @@ export function isSlotConflict(err: unknown): boolean {
   const e = err as { code?: string; constraint?: string } | null;
   return !!e && (e.code === '23P01' || e.code === '23514') && SLOT_CONFLICT_CONSTRAINTS.has(e.constraint ?? '');
 }
+
+/** Default per-lock wait on write paths (design §5.8). */
+export const DEFAULT_LOCK_TIMEOUT_MS = 2_500;
+
+/**
+ * SET LOCAL lock_timeout for this transaction only (set_config(..., is_local = true) is the
+ * parameterisable form of SET LOCAL). Every lock wait after this — idempotency-key row, IP
+ * advisory lock, host row — gives up after `ms` with SQLSTATE 55P03, so a burst on one host
+ * fails fast instead of parking every pooled connection behind that host's lock.
+ */
+export async function setLockTimeout(trx: Transaction<DB>, ms: number): Promise<void> {
+  if (!Number.isInteger(ms) || ms <= 0) throw new RangeError(`lock timeout must be a positive integer, got ${ms}`);
+  await sql`SELECT set_config('lock_timeout', ${`${ms}ms`}, true)`.execute(trx);
+}
+
+export function isLockTimeout(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === '55P03';
+}
