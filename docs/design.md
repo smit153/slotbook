@@ -330,7 +330,7 @@ for each host-local date D in [dFirst, dLast]:
    windows = overrides[D] (off → none, custom → its windows) ?? weeklyRules[isoWeekday(D)]
    for each window:
       ws = toInstant(D, window.start, hostTz, 'earlier')   # gap → shifted forward
-      we = toInstant(D, window.end,   hostTz, 'later')     # overlap → see "Ambiguous boundaries" below
+      we = toInstant(D, window.end,   hostTz, 'earlier')   # overlap → first occurrence (see below)
       for (s = ws; s + duration <= we; s += duration)    # REAL minutes (UTC arithmetic)
           e = s + duration                                # end = start instant + duration
           keep iff rangeFrom <= s < rangeTo              # filter by UTC instant, not by date
@@ -340,7 +340,10 @@ for each host-local date D in [dFirst, dLast]:
 ```
 
 - On normal days, real-minute stepping produces exactly the wall-clock grid (09:00, 09:30…).
-- **Ambiguous boundaries (fall back).** Luxon resolves an ambiguous local time to the **later** offset by default (verified with Luxon 3.7: NY 01:30 on Nov 1 2026 → EST). Design v0.3 wrongly said "earlier". The engine resolves explicitly with `DateTime#getPossibleOffsets()`: a window **start** takes the earlier offset and a window **end** takes the later one. A window that touches the repeated hour therefore covers both occurrences, and never silently loses an hour.
+- **Ambiguous boundaries (fall back).** Luxon resolves an ambiguous local time to the **later** offset by default (verified with Luxon 3.7: NY 01:30 on Nov 1 2026 → EST). Design v0.3 wrongly said "earlier". The engine resolves explicitly with `DateTime#getPossibleOffsets()`, and **both window boundaries take the first occurrence** (decided after Phase 3 review). This is the shorter reading, so it never offers time the host didn't mean. On NY's Nov 1 2026:
+  - A window **ending** at 01:30 ends at 01:30 EDT, so neither 01:30 EDT nor 01:00 EST is offered.
+  - A window **starting** at 01:00 starts at 01:00 EDT. Luxon's default would silently drop that first hour.
+  - A window spanning the whole repeated hour, like 00:00–03:00, still offers **both** 01:00 EDT and 01:00 EST. The grid steps in real minutes, and both instants really are inside the host's stated window.
 - **Non-existent boundaries (spring forward):** shifted forward (Luxon default). A window 02:30–05:00 on Mar 8 2026 (NY) starts at 03:30 EDT.
 - **Horizon** = `now + horizon_days × 24h` (real time). **Min notice** = `now + min_notice_min`. Both use the DB `now` passed in.
 - On DST days the window is measured in real time. A 01:00–04:00 window on spring-forward night is 2 real hours, so there are no phantom slots. A 00:00–03:00 window on fall-back night is 4 real hours, and both 01:00 EDT and 01:00 EST are offered. Labels include the offset.
@@ -462,7 +465,9 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 
 1. **Slot step = event duration.**
 2. **The meeting must fit inside the availability window. Buffers may fall outside it** and only matter against other occupancies.
-3. **Slot end = start instant + duration in real minutes.** On DST nights, windows are measured in real time (§6).
+3. **Slot end = start instant + duration in real minutes.** On DST nights, windows are measured in real time (§6). An ambiguous window boundary (fall-back night) means its **first occurrence**.
+3a. **Horizon = `now + horizon_days × 24 h`** of real time, inclusive. Across a DST change this differs by an hour from "the same clock time N days later". That is accepted. Min notice is inclusive too (`start ≥ now + notice`).
+3b. **Zone labels** come from Luxon/ICU in `en-US`. US zones get letter abbreviations (`EDT`/`EST`), and most others render as `GMT±n` (Berlin: `GMT+2`/`GMT+1`). That is accepted for labelling duplicate fall-back slots.
 4. Windows can't cross midnight, but a window may end at `24:00` ("until midnight"). A date override is either a day off or custom hours, never both, and it replaces that date's weekly rules.
 5. A booking for event type A blocks overlapping slots of event type B for the same host.
 6. Group sessions: guests join the same start until capacity. Buffers apply per session.

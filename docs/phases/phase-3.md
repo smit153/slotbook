@@ -67,7 +67,11 @@ pnpm typecheck → clean · pnpm lint → clean · pnpm db:types --verify → up
 - The padding is documented as defence in depth (design §6.1).
 - Horizon = `now + horizon_days × 24 h`, inclusive. Min notice is inclusive (`start ≥ now + notice`).
 
-## Open questions
+## Post-review change (after your answers)
+- **Ambiguous window ends now take the first occurrence too**, so both boundaries do. Test-first: the two new or changed fall-back tests failed against the old `'later'` end, then passed after a one-line engine change. Results now: a window ending at 01:30 gives `00:00, 00:30, 01:00 EDT`; a window `01:00–01:30` gives `01:00 EDT` only; `00:00–03:00` still gives both 01:00s. Documented in design §6 and assumption 3.
+- Horizon = 30 × 24 h and `GMT±n` labels accepted, and documented as assumptions 3a and 3b.
+
+## Open questions (answered)
 1. **Fall-back window end:** a window ending at an ambiguous time (e.g. "until 01:30" on Nov 1) runs to the **second** 01:30 (EST). That is the maximal reading. Is that the behaviour you want, or should the end take the earlier offset?
 2. **Labels for zones without letter abbreviations:** Luxon renders Berlin as `GMT+2` / `GMT+1` in `en-US`, not `CEST` / `CET`. NY gets `EDT` / `EST` as required for Phase 8. For duplicate fall-back slots in other zones, the UI would show `GMT±n`. Is that acceptable?
 3. **Horizon in real time vs. calendar days:** "30 days" currently means 30 × 24 h from `now`. Across a DST change that's an hour off from "the same clock time 30 days later". Is that fine as a documented assumption?
