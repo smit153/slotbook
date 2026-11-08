@@ -1,25 +1,31 @@
-import { useEffect, useState } from 'react';
+import type { RouteObject } from 'react-router';
+import { Home, NotFound } from './guest/NotFound.js';
+import { BookingPage } from './guest/BookingPage.js';
+import { ManagePage } from './guest/ManagePage.js';
+import { Login } from './host/Login.js';
+import { DashboardLayout } from './host/DashboardLayout.js';
+import { Bookings } from './host/Bookings.js';
+import { EventTypes } from './host/EventTypes.js';
+import { Availability } from './host/Availability.js';
+import { Settings } from './host/Settings.js';
+import { Notifications } from './host/Notifications.js';
 
-type Health = { status: string; db: string } | { error: string };
-
-/** Phase 1 placeholder: proves the SPA is served and can reach the API. */
-export function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-
-  useEffect(() => {
-    fetch('/health')
-      .then((r) => r.json() as Promise<Health>)
-      .then(setHealth)
-      .catch((e: unknown) => setHealth({ error: String(e) }));
-  }, []);
-
-  return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 640, margin: '2rem auto', padding: '0 1rem' }}>
-      <h1>Slotbook</h1>
-      <p>Scaffold is running. Booking pages arrive in later phases.</p>
-      <p>
-        API health: <code>{health ? JSON.stringify(health) : 'checking…'}</code>
-      </p>
-    </main>
-  );
-}
+/** Shared by the browser router (main.tsx) and the memory router in the web tests. */
+export const routes: RouteObject[] = [
+  { path: '/', element: <Home /> },
+  { path: '/login', element: <Login /> },
+  {
+    path: '/dashboard',
+    element: <DashboardLayout />,
+    children: [
+      { index: true, element: <Bookings /> },
+      { path: 'event-types', element: <EventTypes /> },
+      { path: 'availability', element: <Availability /> },
+      { path: 'settings', element: <Settings /> },
+      { path: 'notifications', element: <Notifications /> },
+    ],
+  },
+  { path: '/manage', element: <ManagePage /> },
+  { path: '/:host/:slug', element: <BookingPage /> },
+  { path: '*', element: <NotFound /> },
+];
