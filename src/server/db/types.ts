@@ -95,6 +95,7 @@ export interface EventTypes {
 }
 
 export interface Hosts {
+  active: Generated<boolean>;
   created_at: Generated<Timestamp>;
   email: string;
   id: Generated<string>;

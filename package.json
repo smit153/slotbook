@@ -26,6 +26,7 @@
     "@fastify/static": "^10.1.10",
     "fastify": "^5.12.8",
     "kysely": "^0.29.8",
+    "luxon": "^3.7.2",
     "pg": "^8.23.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@testcontainers/postgresql": "^12.2.1",
+    "@types/luxon": "^3.7.6",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
