@@ -50,7 +50,7 @@ How AI was used to build Slotbook. The brief asks for key prompts, where the AI 
 
 ## Appendix: raw transcript
 
-User messages are verbatim, typos included. Assistant replies are the final message of each turn. Tool calls (file writes, git commands) are summarised in *italics*.
+User messages are verbatim, typos included. Assistant replies are the final message of each turn, lightly condensed. Tool calls (file writes, git commands) are summarised in *italics*.
 
 ### Session 1: design (2026-11-08)
 
