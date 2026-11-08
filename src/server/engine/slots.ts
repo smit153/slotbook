@@ -95,10 +95,12 @@ export function generateSlots(q: SlotQuery): Slot[] {
 
   for (const date of hostDaysCovering(fromMs, toMs, q.hostTz)) {
     for (const w of windowsFor(date, q)) {
-      // Window boundaries resolved so a window touching the repeated fall-back hour covers
-      // both occurrences (start → earlier offset, end → later offset).
+      // Ambiguous boundaries (fall-back night) resolve to their FIRST occurrence, start and
+      // end alike: the shorter reading, which never offers time the host didn't mean.
+      // A window spanning the whole repeated hour (e.g. 00:00–03:00) still contains both
+      // 01:00s, because the grid steps in real minutes.
       const ws = localToInstant(date, parseTimeOfDay(w.start), q.hostTz, 'earlier');
-      const we = localToInstant(date, parseTimeOfDay(w.end), q.hostTz, 'later');
+      const we = localToInstant(date, parseTimeOfDay(w.end), q.hostTz, 'earlier');
 
       // Step in REAL minutes from the window start; end = start instant + duration.
       for (let s = ws; s + durMs <= we; s += durMs) {

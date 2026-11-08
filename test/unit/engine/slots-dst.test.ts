@@ -84,8 +84,14 @@ describe('R12: fall-back night (NY, Sun Nov 1 2026: 02:00 EDT → 01:00 EST)', (
     expect(local(sunday('01:00', '02:00'), NY, true)).toEqual(['01:00 EDT', '01:30 EDT', '01:00 EST', '01:30 EST']);
   });
 
-  it('a window ENDING at the ambiguous 01:30 runs to 01:30 EST (later offset)', () => {
-    expect(local(sunday('00:00', '01:30'), NY, true)).toEqual(['00:00 EDT', '00:30 EDT', '01:00 EDT', '01:30 EDT', '01:00 EST']);
+  it('a window ENDING at the ambiguous 01:30 ends at its FIRST occurrence (01:30 EDT)', () => {
+    // Shorter reading: never offers time the host didn't mean (no 01:30 EDT, no 01:00 EST).
+    expect(local(sunday('00:00', '01:30'), NY, true)).toEqual(['00:00 EDT', '00:30 EDT', '01:00 EDT']);
+  });
+
+  it('a window lying entirely inside the repeated hour uses its first occurrence only', () => {
+    // 01:00–01:30 on fall-back night = 01:00–01:30 EDT, 30 real minutes.
+    expect(local(sunday('01:00', '01:30'), NY, true)).toEqual(['01:00 EDT']);
   });
 
   it('a 60-min meeting may straddle the switch; its end is start + 60 real minutes', () => {
