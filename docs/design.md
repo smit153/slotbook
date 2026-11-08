@@ -39,10 +39,11 @@
 | API | **Fastify** (Node 20+) | Good TS support, with hooks for headers and logging. Alt: Next.js API routes. Rejected because serverless and pooling semantics muddy the transaction and locking story. |
 | Frontend | **React + Vite** SPA (react-router) | Fastify serves the built SPA in prod, so there is one service. |
 | DB access | **Kysely** + raw **`sql`** for constraints, `FOR UPDATE`, `SKIP LOCKED`, advisory locks, ranges and upserts | Typed without ORM magic. Alt: Prisma, which handles exclusion constraints, ranges and transaction control poorly. Alt: plain `pg`, which is untyped. |
-| Migrations | Kysely `Migrator`. Migration bodies are mostly raw `sql`. | Constraints stay visible |
+| Migrations | Kysely `Migrator` with a static migration list. Migration bodies are mostly raw `sql`. | Constraints stay visible |
+| DB types | **kysely-codegen**, generated from the migrated schema (`pnpm db:types`; a test runs `--verify`) | Types can't drift from the SQL. Alt: hand-written, which drifts silently. |
 | Validation | **zod**, shared between API and UI | One schema source |
 | Time zones | **Luxon** | Mature DST handling |
-| Passwords | `argon2` (fallback `bcryptjs`) | Seeded email + password |
+| Passwords | **scrypt from `node:crypto`** (N=2^15, r=8, p=3, an OWASP-equivalent minimum) | Seeded email + password. Alt: argon2, which needs a native build (pnpm 12 build approval, Node 26, Alpine). |
 | Logging | `pino` with redaction | Base for observability |
 | Tests | **Vitest** + **@testcontainers/postgresql** | Real PG, one command |
 | Run | `docker compose up` → postgres + app (migrate → seed → serve) | One command |
@@ -173,7 +174,17 @@ notifications(id, booking_id, type, payload jsonb, created_at,     -- outbox = t
   attempts INT DEFAULT 0, next_attempt_at DEFAULT now(), delivered_at, last_error)   -- never contains tokens
 ```
 
-Overlapping windows within a weekday or date are rejected by the API (zod refinement), not by the DB. That is a known gap.
+Overlapping windows within a weekday or date are **rejected by the DB**. A custom range type `timerange` (over `time`) is used in exclusion constraints on `availability_rules (host_id, weekday, timerange(start,end))` and `date_override_windows (host_id, date, timerange(start,end))`. Touching windows (09–12, 12–17) are allowed.
+
+**Also enforced by the schema (Phase 2):**
+- **Host consistency.** `bookings (event_type_id, host_id)` and `occupancies (event_type_id, host_id)` reference `event_types (id, host_id)`, and `bookings (occupancy_id, host_id)` references `occupancies (id, host_id)`. A row can't point at another host's data.
+- **Data shape per status.** These CHECKs say which columns each status needs, not which transitions are allowed:
+  - `held` needs `expires_at`
+  - `confirmed` needs the guest name, email, `manage_token_hash` and `confirmed_at`
+  - `cancelled` needs `cancelled_at` and `cancelled_by`
+- **Bookings are append-only.** A `BEFORE DELETE` trigger raises `restrict_violation` (23001), so a delete can't bypass the seat counter. Use cancel or expire instead. `TRUNCATE` is not a row event, and the tests truncate bookings and occupancies together.
+- **`occupancies.blocked` must cover the meeting** (`blocked @> tstzrange(start_at, end_at)`).
+- **Calendar dates** (`date_overrides.date`) are returned by pg as `'YYYY-MM-DD'` strings, never as a JS `Date` at the server's local midnight.
 
 ### 4.1 `seats_taken` is maintained by a trigger
 `AFTER INSERT OR UPDATE OF status, occupancy_id ON bookings`:
@@ -181,7 +192,7 @@ Overlapping windows within a weekday or date are rejected by the API (zod refine
 - If OLD was active on occupancy A, decrement A. Then, if NEW is active on occupancy B, increment B. The decrement comes first, so a reschedule that moves to an overlapping time works.
 - The increment fires the `CHECK` and the `EXCLUDE`. A violation raises 23514 or 23P01, and the service maps it to 409.
 
-This is the only trigger. **The status guard lives in one place**, the service's `transition(from, to)` table, used by every write path. The sweeper's SQL only ever does `held → expired`, via `WHERE status='held'`.
+Besides the delete block, this is the only trigger. **The status guard lives in one place**, the service's `transition(from, to)` table, used by every write path. The sweeper's SQL only ever does `held → expired`, via `WHERE status='held'`.
 
 ### 4.2 Why `occupancies`?
 Capacity >1 means bookings legitimately share one time, so an exclusion constraint on `bookings` only works for 1:1. Grouping seats lets Postgres enforce **no overlap** (across event types, buffers included) and **no overbooking**.
@@ -434,7 +445,7 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 1. **Slot step = event duration.**
 2. **The meeting must fit inside the availability window. Buffers may fall outside it** and only matter against other occupancies.
 3. **Slot end = start instant + duration in real minutes.** On DST nights, windows are measured in real time (§6).
-4. Windows can't cross midnight. A date override is either a day off or custom hours, never both, and it replaces that date's weekly rules.
+4. Windows can't cross midnight, but a window may end at `24:00` ("until midnight"). A date override is either a day off or custom hours, never both, and it replaces that date's weekly rules.
 5. A booking for event type A blocks overlapping slots of event type B for the same host.
 6. Group sessions: guests join the same start until capacity. Buffers apply per session.
 7. **Min notice is checked at hold time only** (and at reschedule, which is a new claim). A hold made just inside the notice limit can still be confirmed within its 5 minutes.
@@ -476,7 +487,6 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 **Known gaps (documented, not built):**
 - Manage-token revocation and rotation, and `APP_SECRET` key rotation.
 - The token is visible in infra access logs via the API path (fix: an `Authorization` header).
-- Overlapping availability windows are validated in the API only, not by a DB constraint.
 - Windows crossing midnight. Per-event custom slot intervals.
 - No ordering guarantee for notifications. Consumers must dedupe and order by `occurred_at`.
 - Real email and calendar sync (out of scope per the brief).
