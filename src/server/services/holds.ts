@@ -5,9 +5,13 @@ import { upsertOccupancy } from '../db/occupancies.js';
 import { loadAvailabilityInput, type EventTypeRef, type HostRef } from '../db/slot-inputs.js';
 import { findOfferedSlot } from '../engine/slots.js';
 import { deriveHoldSecret } from '../auth/secrets.js';
-import { holdRequestSchema } from '../../shared/schemas.js';
+import { holdRequestSchema, idempotencyKeySchema } from '../../shared/schemas.js';
+import type { Json } from '../db/types.js';
 import { failure, type ServiceResult } from './errors.js';
+import { claimKey, holdRequestHash, storeResponse } from './idempotency.js';
 import { isSlotConflict, lockedNow } from './tx.js';
+
+const SCOPE = 'hold';
 
 export interface HoldFaults {
   /** Test hook: runs right after the host lock is acquired (before the clock is read). */
@@ -95,6 +99,8 @@ async function lockTarget(trx: Transaction<DB>, t: Target): Promise<Target> {
 export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<ServiceResult<HoldCreated>> {
   const parsed = holdRequestSchema.safeParse(req);
   if (!parsed.success) return failure(400, 'VALIDATION', 'host, slug and start_at (RFC 3339 instant) are required');
+  const key = idempotencyKeySchema.safeParse(req.idempotencyKey);
+  if (!key.success) return failure(400, 'IDEMPOTENCY_KEY_INVALID', 'Idempotency-Key header must be 8–128 visible ASCII characters');
   const startAt = new Date(parsed.data.start_at);
   const ttlMin = deps.holdTtlMin ?? DEFAULT_HOLD_TTL_MIN;
 
@@ -103,6 +109,13 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
 
   try {
     return await deps.db.transaction().execute(async (trx) => {
+      // 1. Claim the key first: a concurrent duplicate waits here, before any other lock.
+      const claimed = await claimKey(trx, SCOPE, key.data, holdRequestHash(parsed.data));
+      if (claimed.kind === 'mismatch') {
+        return failure(422, 'IDEMPOTENCY_KEY_REUSED', 'This Idempotency-Key was already used with a different request');
+      }
+      if (claimed.kind === 'replay') return replay(trx, deps, claimed.status, claimed.body);
+
       const { host, eventType } = await lockTarget(trx, target);
       await deps.faults?.afterHostLock?.();
       const T = await lockedNow(trx);
@@ -111,6 +124,9 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
                  WHERE host_id = ${host.id} AND status = 'held' AND expires_at <= ${T}::timestamptz`.execute(trx);
 
       const result = await claim(trx, deps, host, eventType, startAt, T, ttlMin, req.clientIp);
+
+      // Terminal business outcomes (201 / 409 / 422) are stored for the key — without the secret.
+      await storeResponse(trx, SCOPE, key.data, result.status, storable(result));
 
       await deps.faults?.beforeCommit?.();
       return result;
@@ -161,4 +177,23 @@ async function claim(
     await sql`ROLLBACK TO SAVEPOINT claim`.execute(trx);
     return failure(409, 'SLOT_UNAVAILABLE', 'That time was just taken');
   }
+}
+
+/** What goes into idempotency_keys.response_body: the response minus secrets and the clock. */
+function storable(result: ServiceResult<HoldCreated>): Json {
+  if (result.status !== 201) return result.body as unknown as Json;
+  const { hold_secret: _secret, server_now: _now, ...rest } = result.body as HoldCreated;
+  return rest;
+}
+
+/** Rebuild a stored response: re-derive the hold secret, use the CURRENT server time. */
+async function replay(trx: Transaction<DB>, deps: HoldDeps, status: number, body: Json): Promise<ServiceResult<HoldCreated>> {
+  if (status !== 201) return { status, body: body as never, replayed: true };
+  const stored = body as Omit<HoldCreated, 'hold_secret' | 'server_now'>;
+  const now = await lockedNow(trx);
+  return {
+    status,
+    replayed: true,
+    body: { ...stored, hold_secret: deriveHoldSecret(deps.appSecret, stored.hold_id), server_now: now.toISOString() },
+  };
 }
