@@ -1,17 +1,16 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
-import { buildApp } from '../../src/server/app.js';
 import { createDb } from '../../src/server/db/kysely.js';
 import { migrateToLatest } from '../../src/server/db/migrate.js';
 import { testDb } from '../helpers/db.js';
+import { makeApp } from '../helpers/app.js';
 
-const config = { TRUST_PROXY: false as const, LOG_LEVEL: 'silent' as const, WEB_DIST_DIR: undefined };
 const db = testDb();
 afterAll(() => db.destroy());
 
 describe('scaffold smoke', () => {
   it('GET /health → 200 with db ok against the real test database', async () => {
-    const app = await buildApp({ config, db, logger: false });
+    const app = await makeApp(db);
     const res = await app.inject({ method: 'GET', url: '/health' });
     await app.close();
     expect(res.statusCode).toBe(200);
@@ -20,7 +19,7 @@ describe('scaffold smoke', () => {
 
   it('GET /health → 503 when the database is unreachable', async () => {
     const deadDb = createDb({ connectionString: 'postgres://u:p@127.0.0.1:1/none', connectionTimeoutMillis: 500 });
-    const app = await buildApp({ config, db: deadDb, logger: false });
+    const app = await makeApp(deadDb);
     const res = await app.inject({ method: 'GET', url: '/health' });
     await app.close();
     await deadDb.destroy();

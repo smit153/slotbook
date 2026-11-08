@@ -23,6 +23,8 @@
     "db:types": "tsx scripts/db-types.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/rate-limit": "^11.2.2",
     "@fastify/static": "^10.1.10",
     "fastify": "^5.12.8",
     "kysely": "^0.29.8",

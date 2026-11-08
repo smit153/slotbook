@@ -28,6 +28,8 @@ services:
       LOG_LEVEL: info
       TRUST_PROXY: "false"
       SEED_HOST_PASSWORD: ${SEED_HOST_PASSWORD:-demo1234}
+      # The browser origin of the app; host writes from any other Origin are refused (CSRF).
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
     ports:
       - "${APP_PORT:-3000}:3000"
 

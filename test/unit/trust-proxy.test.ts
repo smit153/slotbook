@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildApp } from '../../src/server/app.js';
+import { makeApp } from '../helpers/app.js';
 import { createDb } from '../../src/server/db/kysely.js';
 
 // The pool is lazy: no connection is attempted because no route touches the DB.
@@ -7,11 +7,7 @@ const db = createDb({ connectionString: 'postgres://u:p@127.0.0.1:1/none' });
 afterAll(() => db.destroy());
 
 async function ipSeen(trustProxy: false | number, xff?: string): Promise<string> {
-  const app = await buildApp({
-    config: { TRUST_PROXY: trustProxy, LOG_LEVEL: 'silent', WEB_DIST_DIR: undefined },
-    db,
-    logger: false,
-  });
+  const app = await makeApp(db, { env: { TRUST_PROXY: trustProxy === false ? 'false' : String(trustProxy) } });
   app.get('/__ip', async (req) => ({ ip: req.ip }));
   const res = await app.inject({
     method: 'GET',
