@@ -383,4 +383,26 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 9: sweeper audit rows, host tz rule, Phase 6 plan
+
+#### Turn 15. User
+> Accept Intl+Luxon zones, add sweeper audit rows, write Phase 6 plan
+
+*AI wrote `expiry-audit.test.ts` first (3 red), then added `sweepExpiredHolds()`: one statement that expires holds and inserts one audit row each (`via`: sweeper/hold/reschedule). It is used at all three expiry sites; 312/312 (`6d6c2a0`). Design: the tz rule is Intl + Luxon, with the reason (supportedValuesOf lacks `Asia/Kolkata`/`UTC`), and expiries are always audited. The full run showed 36 test files, which revealed that the AI's Phase 5 summary had claimed "39 test files" (really 35) without checking; corrected in `phase-5.md` (`79159cc`).*
+
+#### Turn 15. Assistant (Phase 6 plan, condensed)
+> - **Done:** expiry audit rows at all three sites (test-first). Tz rule = Intl + Luxon, documented. Corrected my wrong file count in the Phase 5 summary.
+> - **Phase 6 plan:** Fastify routes for every service, plus `@fastify/cookie` sessions:
+>   - login with a dummy-hash timing guard; sessions stored as sha256; HttpOnly + SameSite=Lax + Secure in prod
+>   - host CRUD for settings, event types (no DELETE) and availability (replace-all), all under the host lock via `writeTx`
+>   - DB constraint errors mapped to 409/422
+>   - security headers, request ids, pino redaction + URL token rewrite, a JSON error handler (no stack traces), and the `Idempotency-Replayed` / `Retry-After` headers
+>   - a slots response with local labels and an `ambiguous` flag for duplicate fall-back times
+> - **Tests:** R21 (no secrets in captured logs), HTTP contracts, auth, CRUD atomicity, host edits blocking on the host lock, R22 via HTTP IPs.
+> - **Questions:** an Origin check for CSRF; login brute force (gap vs a small in-memory limiter); session TTL; the slots response shape.
+>
+> Waiting for "go".
+
+---
+
 <!-- Append new turns below. -->
