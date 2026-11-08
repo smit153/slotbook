@@ -338,4 +338,21 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 7: lock_timeout, Phase 5 plan
+
+#### Turn 13. User
+> Answers: yes, host-side edits take the same host lock. Yes, document pool sizing and measure it in the load test, and also add SET LOCAL lock_timeout (~2–3s) on write paths so a burst on one host fails fast with 503 instead of starving the pool. Then write the Phase 5 plan.
+
+*AI wrote `holds-lock-timeout.test.ts` first. Without a timeout, its first case hung forever (the hold waited behind a lock the test only releases afterwards); the run was stopped, and no containers were left behind. Then it implemented `setLockTimeout()` (`set_config('lock_timeout', '2500ms', true)`, transaction-local) as the first statement of the hold transaction, with SQLSTATE 55P03 → 503 `HOST_BUSY`, not stored for the key. 3/3 passed, then 248/248 (`cc3a0e1`). Design: new §5.8 (lock_timeout, pool sizing, load-test measurement plan), host-side edits added to the lock table, 503 added to the codes. It first put §5.8 before §5.7 and fixed the order (`74ff024`, `a3fbad7`).*
+
+#### Turn 13. Assistant (lock_timeout done + Phase 5 plan, condensed)
+> - **lock_timeout:** done, test-first. 503 `HOST_BUSY` after 2.5 s, nothing stored, and a same-key retry gets 201. Design §5.8 covers pool sizing and what the load test will measure. Host-side edits take the host lock (design §5.1 table, built in Phase 6).
+> - **Phase 5 plan:** confirm, cancel and reschedule each lock host → booking `FOR UPDATE` → locked clock, with `lock_timeout` → 503. HMAC manage token (only its sha256 is stored). A `transition()` table is the single status guard. Outbox notification rows and `booking_events` are written in the same transaction. The sweeper is per host with `SKIP LOCKED`, and also purges keys older than 24 h. It starts with the server.
+> - **Tests, ranked:** R6 (+ hold expires while confirm waits on the lock), R9, R10, R14 (full server clock skew), R15, R16, R17, R20 (full), R24, R27, sweeper with two instances, `lock_timeout` on each path; R25 randomized as a stretch.
+> - **Questions:** refuse guest changes after the start time? Confirm replay matched on name + case-insensitive email? Reschedule within the same event type only? R25 now or "if time"?
+>
+> Waiting for "go".
+
+---
+
 <!-- Append new turns below. -->
