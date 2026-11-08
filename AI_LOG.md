@@ -272,4 +272,23 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+#### Turn 10. User
+> go
+
+*AI built Phase 3:*
+- *Step 0: migration 0003 (`hosts.active`, DELETE blocked on hosts and event types), a recursive catalog test proving no FK chain cascades into bookings, and a meta-test that adds a cascade in a rolled-back txn and sees it caught.*
+- *It installed Luxon 3.7 and checked `getPossibleOffsets()` (an ambiguous time gives both offsets, a gap gives the shifted time).*
+- *Engine: `local-time.ts` (explicit earlier/later offset choice), `slots.ts` (`generateSlots`, `findOfferedSlot`).*
+- *While writing the tests, the AI found that its plan's claim about the ±1-day padding was false: windows never cross midnight, so iterating host days from `localDate(from)` to `localDate(to)` is already enough. It recorded this instead of faking a test.*
+- *R12 tests (NY/Berlin table, cross-day, both 01:00s, ambiguous window start and end, spring gap, Berlin host) passed first time with exact UTC assertions.*
+- *Mutation check: making the engine read `Date.now()` failed 4 clock tests and the lint rule.*
+- *The lint rule now also bans Luxon clock reads. A scanner for SQL time-zone constructs was added; while writing the loader, the AI noticed that `interval '1 day'` on timestamptz is itself tz math and added it to the scanner.*
+- *Loader `slot-inputs.ts`: the AI tightened its own first version from `Kysely | Transaction` to `Transaction` only, so the `Promise.all` queries share one snapshot. R7 tests pass.*
+- *196/196 tests. Migration 0003 was applied as an upgrade to the existing Compose DB (no volume wipe), then the containers were stopped. The design padding wording was corrected and `docs/phases/phase-3.md` written.*
+
+#### Turn 10. Assistant
+> Phase 3 is done. 196/196 tests pass (114 unit, 82 integration), with typecheck, lint and `db:types --verify` clean. 8 commits. The NY/Berlin table, the cross-day Tuesday, both 01:00 slots and the spring gap all pass with exact UTC assertions. R7 passes at the loader. The engine and loader ignore the process clock (mutation-checked). Bugs and corrections: the Luxon offset default (design was wrong), my false padding claim, the loader snapshot risk (now `Transaction`-only), a fixture type error, and `interval '1 day'` as hidden SQL tz math. Three open questions: the ambiguous window end, `GMT±n` labels outside the US, and horizon in real hours. Waiting for review.
+
+---
+
 <!-- Append new turns below. -->
