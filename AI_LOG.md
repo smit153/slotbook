@@ -312,4 +312,30 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 6: Phase 4 (holds + idempotency)
+
+#### Turn 12. User
+> Good plan, and yes to one clearly labelled red commit. Say in its message that the constraints already prevent the double booking, so the red shows unmapped errors.
+>
+> One fix: the now() risk isn't "consistent" under contention. Example: an old hold expires at T+1s, a new hold starts its transaction at T and waits 2s for the host lock, and the sweep uses now() = T, so the expired hold isn't swept and the guest gets a wrong 409. In Phase 5 confirm, the same bug would accept a hold that expired during the wait.
+>
+> So in every write path, read the time once AFTER acquiring the locks (statement_timestamp() or clock_timestamp()), and use that value for the sweep, expires_at and all expiry checks. Add a test: an existing hold expires while a new hold for the same slot is blocked on the host lock → the new hold gets 201, not 409.
+
+*AI built Phase 4:*
+- *Fixed the design first: write paths read `clock_timestamp()` once after the locks. It had called the stale `now()` "consistent".*
+- *Added HMAC hold secrets. It then noticed its own tamper assertion only passed by luck (the last base64url char carries 4 bits) and fixed it.*
+- *Wrote the R1–R4 concurrency test against a naive service and committed it red, with the agreed message. Real outcomes: R1 got 49 × 422 instead of 409; R2/R3 got unmapped 23514/23P01 errors; the constraints held every time.*
+- *Implemented `createHold` (host lock → locked clock → sweep → rules-only re-validation → SAVEPOINT claim → 409 mapping). The same test went green.*
+- *The R4 lock-bypass test then exposed deadlocks (40P01) between parallel claims on different overlapping sessions: still one winner, but 29 s. The AI made the test accept 40P01, cut it to 10 inserts, and set `deadlock_timeout=100ms` on the test DB.*
+- *Removed a bogus test it had written (`* 0` offset).*
+- *Added the stale-clock test you asked for, and showed via a `now()` mutation that it fails with exactly the wrong 409.*
+- *Idempotency (claim/replay/hash), then the per-IP cap (advisory lock before host lock, IPv6-mapped normalisation).*
+- *The validation tests failed on a Sunday: the `nextMonday9` test helper (also used in Phase 3) used Luxon `set({weekday: 1})`, which returned tomorrow. The AI fixed the helper and unit-tested it for every weekday.*
+- *245/245 tests, green in 3 consecutive runs. Design updated; `docs/phases/phase-4.md` written.*
+
+#### Turn 12. Assistant
+> Phase 4 is done. 245/245 tests pass (126 unit, 119 integration), stable across 3 runs; typecheck, lint and types verify are clean. Red commit `465c018` → green `6badd46`: R1 1/49, R2 5/10, R3 1/19. Your clock fix is in, and its test fails with the wrong 409 under a `now()` mutation. Findings and bugs: lock-bypassed claims deadlock (why the host lock is primary), a Sunday-only test-helper bug, a lucky hold-secret test, a bogus `* 0` test removed before commit. Two open questions: event-type edits should take the host lock (Phase 6), and pool sizing under per-host bursts. Waiting for review.
+
+---
+
 <!-- Append new turns below. -->
