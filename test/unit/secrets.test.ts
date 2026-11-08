@@ -20,7 +20,10 @@ describe('hold secrets (HMAC-derived, design §5.0)', () => {
     const s = deriveHoldSecret(SECRET, ID);
     expect(verifyHoldSecret(SECRET, ID, s)).toBe(true);
     expect(verifyHoldSecret(SECRET, ID.replace('a10', 'a11'), s)).toBe(false);
-    expect(verifyHoldSecret(SECRET, ID, `${s.slice(0, -1)}A`)).toBe(s.endsWith('A'));
+    // Tamper with a middle character (the last base64url char only carries 4 data bits, so
+    // changing it can decode to the same bytes — harmless, but not a meaningful test).
+    const flipped = s.slice(0, 10) + (s[10] === 'A' ? 'B' : 'A') + s.slice(11);
+    expect(verifyHoldSecret(SECRET, ID, flipped)).toBe(false);
     for (const bad of ['', 'short', 'x'.repeat(500), null, undefined, 42, { s }]) {
       expect(verifyHoldSecret(SECRET, ID, bad)).toBe(false);
     }
