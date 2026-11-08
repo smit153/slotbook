@@ -194,7 +194,21 @@ Overlapping windows within a weekday or date are **rejected by the DB**. A custo
 
 Besides the delete block, this is the only trigger. **The status guard lives in one place**, the service's `transition(from, to)` table, used by every write path. The sweeper's SQL only ever does `held → expired`, via `WHERE status='held'`.
 
-### 4.2 Why `occupancies`?
+### 4.2 Deactivate, never delete
+Bookings can't be deleted (append-only), so nothing they depend on may disappear either:
+- **Event types** are deactivated (`active = false`). The public page and slot API return 404, and no new holds are possible. Existing bookings keep working: manage links, cancel, and reschedule to *another active* event type's slot is out of scope.
+- **Hosts** are deactivated (`hosts.active = false`, added in migration 0003). Their public pages return 404, login is refused, and existing bookings stay valid.
+- **No foreign key cascades into `bookings`.** Every FK on `bookings`, `occupancies` and `event_types` is `NO ACTION`, so deleting a parent that bookings depend on fails. Checked in the catalog on 2026-11-09:
+
+  | Parent → child | ON DELETE |
+  |---|---|
+  | hosts → host_sessions, availability_rules, date_overrides | CASCADE (config only, no booking data) |
+  | date_overrides → date_override_windows | CASCADE |
+  | hosts → event_types · event_types → occupancies, bookings · occupancies → bookings · bookings → booking_events, notifications | NO ACTION |
+
+  A catalog test (Phase 3, step 0) asserts this, so a future migration can't add a cascade towards bookings unnoticed. `DELETE` on `hosts` and `event_types` is also blocked by triggers, the same way as for bookings, so deactivation is the only path.
+
+### 4.3 Why `occupancies`?
 Capacity >1 means bookings legitimately share one time, so an exclusion constraint on `bookings` only works for 1:1. Grouping seats lets Postgres enforce **no overlap** (across event types, buffers included) and **no overbooking**.
 
 ---
@@ -284,6 +298,7 @@ Guest: `POST /api/bookings/{token}/cancel` `{reason?}`. Host: `POST /api/host/bo
 - **Postgres `now()` is the only clock** for expiry, min notice, horizon, "upcoming" and the slot engine's `now`. The slots route reads `now()` from the DB and passes it into the pure engine.
 - **Service and engine code never read the JS clock.** An ESLint `no-restricted-syntax` rule bans `Date.now()` and argument-less `new Date()` under `src/server/{services,engine}`. The only exceptions are logging and metrics.
 - The client never sends its clock. The UI countdown uses `expires_at − server_now` from the response.
+- **No time-zone math in SQL.** No `AT TIME ZONE`, `timezone()`, `::date` on a timestamptz, `date_trunc` or `extract` on local time, and Postgres's tz database is never consulted for host or guest zones. SQL compares UTC instants only. All wall-clock and zone math happens in Luxon (one tz database, Node's ICU). A unit test scans `src/` for these constructs.
 - Proof: R14 skews the **app server** clock and shows that nothing changes.
 
 ### 5.6 State machine
@@ -314,8 +329,8 @@ dLast  = localDate(rangeTo,   hostTz) + 1 day
 for each host-local date D in [dFirst, dLast]:
    windows = overrides[D] (off → none, custom → its windows) ?? weeklyRules[isoWeekday(D)]
    for each window:
-      ws = toInstant(D, window.start, hostTz)        # Luxon: gap → shift forward, overlap → earlier offset
-      we = toInstant(D, window.end,   hostTz)
+      ws = toInstant(D, window.start, hostTz, 'earlier')   # gap → shifted forward
+      we = toInstant(D, window.end,   hostTz, 'later')     # overlap → see "Ambiguous boundaries" below
       for (s = ws; s + duration <= we; s += duration)    # REAL minutes (UTC arithmetic)
           e = s + duration                                # end = start instant + duration
           keep iff rangeFrom <= s < rangeTo              # filter by UTC instant, not by date
@@ -325,6 +340,9 @@ for each host-local date D in [dFirst, dLast]:
 ```
 
 - On normal days, real-minute stepping produces exactly the wall-clock grid (09:00, 09:30…).
+- **Ambiguous boundaries (fall back).** Luxon resolves an ambiguous local time to the **later** offset by default (verified with Luxon 3.7: NY 01:30 on Nov 1 2026 → EST). Design v0.3 wrongly said "earlier". The engine resolves explicitly with `DateTime#getPossibleOffsets()`: a window **start** takes the earlier offset and a window **end** takes the later one. A window that touches the repeated hour therefore covers both occurrences, and never silently loses an hour.
+- **Non-existent boundaries (spring forward):** shifted forward (Luxon default). A window 02:30–05:00 on Mar 8 2026 (NY) starts at 03:30 EDT.
+- **Horizon** = `now + horizon_days × 24h` (real time). **Min notice** = `now + min_notice_min`. Both use the DB `now` passed in.
 - On DST days the window is measured in real time. A 01:00–04:00 window on spring-forward night is 2 real hours, so there are no phantom slots. A 00:00–03:00 window on fall-back night is 4 real hours, and both 01:00 EDT and 01:00 EST are offered. Labels include the offset.
 - **Live occupancy read** (no sweeper and no `seats_taken`):
   ```sql
@@ -490,6 +508,7 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 - Windows crossing midnight. Per-event custom slot intervals.
 - No ordering guarantee for notifications. Consumers must dedupe and order by `occurred_at`.
 - Real email and calendar sync (out of scope per the brief).
+- **No purge job.** Bookings are append-only, so expired holds stay as rows forever. A deliberate admin archive/purge job (run outside the app role, with the delete trigger disabled for that session) is a next step.
 
 ---
 
