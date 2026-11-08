@@ -33,14 +33,29 @@ const OCCUPANCY_PAD_MS = 24 * 60 * 60 * 1000;
  * same snapshot. The booking path calls it after taking the host lock, so `now` and the
  * occupancies are those of the locked transaction.
  */
+export interface LoadOptions {
+  /**
+   * The clock to use. Write paths pass T = clock_timestamp() read AFTER taking their locks
+   * (design §5.5); the lock-free read path omits it and gets now() of its snapshot.
+   */
+  now?: Date;
+  /** false → skip the occupancy query (hold re-validation checks the RULES only). */
+  withOccupancies?: boolean;
+}
+
 export async function loadAvailabilityInput(
   db: Transaction<DB>,
   host: HostRef,
   eventType: EventTypeSpec,
   range: { from: Date; to: Date },
+  opts: LoadOptions = {},
 ): Promise<AvailabilityInput> {
-  const { rows: [clock] } = await sql<{ now: Date }>`SELECT now() AS now`.execute(db);
-  if (!clock) throw new Error('SELECT now() returned no row');
+  let now = opts.now;
+  if (!now) {
+    const { rows: [clock] } = await sql<{ now: Date }>`SELECT now() AS now`.execute(db);
+    if (!clock) throw new Error('SELECT now() returned no row');
+    now = clock.now;
+  }
 
   const days = hostDaysCovering(range.from.getTime(), range.to.getTime(), host.timezone);
   const firstDay = days[0]!;
@@ -64,14 +79,14 @@ export async function loadAvailabilityInput(
       .where('date', '<=', lastDay)
       .orderBy('start_time')
       .execute(),
-    sql<{
+    opts.withOccupancies === false ? Promise.resolve({ rows: [] }) : sql<{
       event_type_id: string; start_at: Date; end_at: Date;
       blocked_from: Date; blocked_to: Date; capacity: number; live_seats: number;
     }>`
       SELECT o.event_type_id, o.start_at, o.end_at,
              lower(o.blocked) AS blocked_from, upper(o.blocked) AS blocked_to, o.capacity,
              count(b.id) FILTER (
-               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > now()))::int AS live_seats
+               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > ${now}::timestamptz))::int AS live_seats
         FROM occupancies o
         LEFT JOIN bookings b ON b.occupancy_id = o.id
        WHERE o.host_id = ${host.id}
@@ -80,7 +95,7 @@ export async function loadAvailabilityInput(
                                     ${new Date(range.to.getTime() + OCCUPANCY_PAD_MS)}::timestamptz, '[)')
        GROUP BY o.id
       HAVING count(b.id) FILTER (
-               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > now())) > 0`.execute(db),
+               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > ${now}::timestamptz)) > 0`.execute(db),
   ]);
 
   const windowsByDate = new Map<string, TimeWindow[]>();
@@ -110,7 +125,7 @@ export async function loadAvailabilityInput(
     overrides,
     eventType,
     occupancies,
-    now: clock.now,
+    now,
   };
 }
 

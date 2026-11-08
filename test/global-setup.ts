@@ -26,7 +26,10 @@ export default async function setup(project: TestProject): Promise<() => Promise
       .withPassword('slotbook')
       // Throwaway DB: durability off makes tests faster and does not change
       // locking/constraint semantics, which is what the tests are about.
-      .withCommand(['postgres', '-c', 'fsync=off', '-c', 'synchronous_commit=off', '-c', 'full_page_writes=off', '-c', 'max_connections=200'])
+      // deadlock_timeout 100 ms (default 1 s): the R4 lock-bypass test provokes exclusion-
+      // constraint deadlocks on purpose; detection timing changes, not who wins.
+      .withCommand(['postgres', '-c', 'fsync=off', '-c', 'synchronous_commit=off', '-c', 'full_page_writes=off',
+        '-c', 'max_connections=200', '-c', 'deadlock_timeout=100ms'])
       .start();
     url = container.getConnectionUri();
   }

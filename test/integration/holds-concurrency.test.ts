@@ -83,13 +83,20 @@ describe('R4: host lock bypassed — the constraints alone hold (parallel raw in
     expect(await seatsTaken(db, occ.id)).toBe(2);
   });
 
-  it('30 parallel direct inserts on 30 mutually overlapping sessions → exactly 1 row', async () => {
+  it('10 parallel direct inserts on 10 mutually overlapping sessions → exactly 1 row (some losers deadlock)', async () => {
+    // Without the host lock, two transactions claiming DIFFERENT overlapping sessions each wait
+    // on the other's uncommitted row in the exclusion check → Postgres aborts one with 40P01
+    // after deadlock_timeout (1 s). Still never a double booking — but slow and noisy, which
+    // is why the host lock is the primary guard and the constraint the backstop (Phase 4 finding).
     const sc = await scenario(db, { capacity: 1, duration_min: 60 });
-    const occs = await Promise.all(Array.from({ length: 30 }, (_, i) =>
+    const occs = await Promise.all(Array.from({ length: 10 }, (_, i) =>
       createOccupancy(db, sc.ev, new Date(sc.slot.getTime() + i * 60_000).toISOString())));
     const settled = await Promise.allSettled(occs.map((o) => createBooking(db, o, sc.ev, 'held')));
-    const failures = settled.filter((s) => s.status === 'rejected').map((s) => (s.reason as { constraint?: string }).constraint);
+    const codes = settled.filter((s) => s.status === 'rejected').map((s) => (s.reason as { code?: string }).code);
     expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(1);
-    expect(new Set(failures)).toEqual(new Set(['occupancies_no_overlap']));
+    expect(codes).toHaveLength(9);
+    for (const c of codes) expect(['23P01', '40P01']).toContain(c); // exclusion violation or deadlock victim
   });
+  // The same race THROUGH the service is R3 above (different overlapping sessions): there
+  // `t.other` must be empty, so a single deadlock (a rejected promise) would fail it.
 });
