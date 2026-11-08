@@ -10,16 +10,11 @@ import { holdRequestSchema, idempotencyKeySchema } from '../../shared/schemas.js
 import type { Json } from '../db/types.js';
 import { failure, type ServiceResult } from './errors.js';
 import { claimKey, holdRequestHash, storeResponse } from './idempotency.js';
-import { DEFAULT_LOCK_TIMEOUT_MS, isLockTimeout, isSlotConflict, lockedNow, setLockTimeout } from './tx.js';
+import { isSlotConflict, lockedNow, writeTx, type Faults } from './tx.js';
 
 const SCOPE = 'hold';
 
-export interface HoldFaults {
-  /** Test hook: runs right after the host lock is acquired (before the clock is read). */
-  afterHostLock?: () => Promise<void> | void;
-  /** Test hook: runs after every write, just before COMMIT (R13 crash simulation). */
-  beforeCommit?: () => Promise<void> | void;
-}
+export type HoldFaults = Faults;
 
 export interface HoldDeps {
   db: Database;
@@ -127,8 +122,7 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
   if (!target) return failure(404, 'NOT_FOUND', 'Unknown host or event type');
 
   try {
-    return await deps.db.transaction().execute(async (trx) => {
-      await setLockTimeout(trx, deps.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS);
+    return await writeTx(deps, async (trx) => {
       // 1. Claim the key first: a concurrent duplicate waits here, before any other lock.
       const claimed = await claimKey(trx, SCOPE, key.data, holdRequestHash(parsed.data));
       if (claimed.kind === 'mismatch') {
@@ -161,10 +155,6 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
     });
   } catch (err) {
     if (err instanceof Gone) return failure(404, 'NOT_FOUND', 'Unknown host or event type');
-    if (isLockTimeout(err)) {
-      // Rolled back, so nothing is stored for the key: retrying the same key later is safe.
-      return failure(503, 'HOST_BUSY', 'This calendar is busy right now; please retry in a moment');
-    }
     if (err instanceof HoldLimit) {
       return failure(429, 'HOLD_LIMIT', `At most ${ipCap} slots can be held at once; finish or let one expire first`);
     }
