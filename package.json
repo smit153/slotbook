@@ -1,0 +1,51 @@
+{
+  "name": "slotbook",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev:api": "tsx watch --env-file-if-exists=.env src/server/index.ts",
+    "dev:web": "vite",
+    "build": "pnpm build:server && pnpm build:web",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:web": "vite build",
+    "start": "node dist/server/index.js",
+    "migrate": "tsx --env-file-if-exists=.env src/server/db/migrate.ts",
+    "seed": "tsx --env-file-if-exists=.env src/server/db/seed.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/web/tsconfig.json",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.10",
+    "fastify": "^5.12.8",
+    "kysely": "^0.29.8",
+    "pg": "^8.23.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^8.5.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testcontainers/postgresql": "^12.2.1",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "concurrently": "^10.0.7",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
+  }
+}
