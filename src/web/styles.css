@@ -1,0 +1,54 @@
+/* Slotbook — one small stylesheet; plain and clear. */
+:root { --fg: #1d2330; --muted: #5c6475; --line: #d9dde5; --accent: #2457d6; --err: #b3261e; --ok: #1e7a3c; --bg: #fff; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+main { max-width: 960px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+main.narrow, form.narrow { max-width: 560px; }
+h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.15rem; margin: 1.5rem 0 .5rem; }
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+label { display: block; margin: .75rem 0 .25rem; font-weight: 600; }
+label.inline, form.inline label { display: inline; margin: 0 .5rem 0 0; font-weight: 400; }
+input, select, textarea { font: inherit; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 6px; max-width: 100%; }
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid #9bb7ff; outline-offset: 1px; }
+button { font: inherit; padding: .45rem .9rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+button:disabled { opacity: .55; cursor: default; }
+button.link { background: none; border: none; color: var(--accent); padding: .25rem .4rem; }
+.actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem; }
+.banner { padding: .6rem .8rem; border-radius: 6px; margin: .75rem 0; }
+.banner.error { background: #fdecea; color: var(--err); border: 1px solid #f3b7b1; }
+.banner.notice { background: #e8f5ec; color: var(--ok); border: 1px solid #b5dfc2; }
+.field-error { color: var(--err); margin-left: .5rem; font-size: .9rem; }
+.invalid input, fieldset.invalid { border-color: var(--err); }
+.badge { margin-left: .5rem; font-size: .8rem; background: #eee; padding: .1rem .4rem; border-radius: 4px; }
+
+/* dashboard */
+.dashboard header { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; padding: .75rem 1rem; border-bottom: 1px solid var(--line); }
+.dashboard nav { display: flex; gap: .75rem; flex: 1; flex-wrap: wrap; }
+.dashboard nav a { text-decoration: none; }
+.dashboard nav a.active { font-weight: 700; text-decoration: underline; }
+ul.bookings, ul.event-types, ul.notifications { list-style: none; padding: 0; margin: 0; }
+ul.bookings li, ul.event-types li, ul.notifications li { padding: .6rem 0; border-bottom: 1px solid var(--line); display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+ul.event-types li { display: block; }
+li.cancelled, li.inactive { color: var(--muted); }
+.when { font-variant-numeric: tabular-nums; min-width: 10rem; font-weight: 600; }
+.grid-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 1rem; }
+.grid-form .actions, .grid-form .banner { grid-column: 1 / -1; }
+fieldset { border: 1px solid var(--line); border-radius: 6px; margin: .5rem 0; padding: .5rem .75rem; }
+.window { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .25rem 0; }
+.window label { display: inline; margin: 0; font-weight: 400; }
+.window input { width: 6rem; }
+
+/* booking */
+.booking { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
+@media (min-width: 800px) { .booking { grid-template-columns: 2fr 1fr; } }
+.days, .times { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0; padding: 0; list-style: none; }
+button.day, button.time { background: #fff; color: var(--accent); }
+button.day.selected, button.time.selected { background: var(--accent); color: #fff; }
+.hold { border: 1px solid var(--line); border-radius: 8px; padding: 1rem; align-self: start; }
+.countdown { color: var(--muted); font-variant-numeric: tabular-nums; }
+.when-big { font-size: 1.25rem; font-weight: 600; }
+.manage-link { word-break: break-all; }
+.row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+.row label { margin: 0; }
