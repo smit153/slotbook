@@ -405,4 +405,41 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 10: Phase 6 (API routes + auth)
+
+#### Turn 16. User
+> Go, with these:
+> - The Origin check will break pnpm dev: the browser is on :5173, and Vite's proxy doesn't rewrite Origin. Make the allowed origins configurable (APP_ORIGIN, plus the Vite origin in dev) and test both.
+> - Login limiter: use @fastify/rate-limit on the login route only (~10/min per IP), not a hand-rolled one. We'll reuse it for abuse protection later.
+> - Make sure 40P01 / 40001 get one automatic retry, then 503 with Retry-After, never a 500. Add a test if one doesn't exist.
+> - 7-day sessions with no sliding renewal are fine. Server-computed slot labels are fine.
+
+*AI (in progress when the connection dropped):*
+- *Installed `@fastify/cookie` 11 and `@fastify/rate-limit` 11.*
+- *Config: `APP_ORIGIN` (required in production), `EXTRA_ALLOWED_ORIGINS`, `SESSION_TTL_HOURS`, and `allowedOrigins()` adding the Vite origins in development.*
+- *`http/` (security headers, URL redaction serializers, JSON error handler mapping 40P01/40001/55P03 → 503 + Retry-After) and `AbortTx` for rollback-with-result.*
+- *Services: slots-view (labels + `ambiguous`), auth (dummy-hash login, DB sessions), host-admin (settings, event types, availability replace-all under the host lock), host-queries.*
+- *Route modules and `app.ts` rewired. Renamed `request.host` → `request.sessionHost` (Fastify already has `request.host`).*
+- *Old tests moved to a `testConfig()` helper; 312/312 still green.*
+
+#### Turn 17. User
+> reconnected
+
+*AI checked `git status`: the Phase 6 work was intact and uncommitted. It continued with the API tests.*
+
+*AI finished Phase 6:*
+- *HTTP tests: headers, the error contract, and your 503 rule incl. an error-handler safety net.*
+- *R21: log capture over a full journey; a redaction mutation makes it fail.*
+- *Guest routes over HTTP. In its own review the AI found the fall-back label test was vacuous (Nov 1 2026 is past, so it returned early). It replaced it with a `localLabel` unit test and an HTTP test on the next US fall-back computed from the DB clock.*
+- *Auth/rate-limit/Origin tests in both dev and test configs. It fixed its own wrong "APP_ORIGIN required" assertion.*
+- *Host admin tests: atomic availability, 4 edits blocked by the host lock, isolation.*
+- *Added APP_ORIGIN to compose and `.env.example` (production config now requires it).*
+- *A full run then failed R1 with 10 × 503: since `lock_timeout`, the high-parallelism tests had been timing-dependent. Contention tests now use a 30 s timeout, and a new burst test checks the default-timeout outcomes (201/409/503 only). 3 consecutive green runs (364 tests).*
+- *Committed in 7 steps, verified `docker compose up --build` (demo login, slots in Asia/Kolkata, a real hold), stopped the containers, rewrote design §7, and wrote `docs/phases/phase-6.md`.*
+
+#### Turn 17. Assistant
+> Phase 6 is done. 364/364 tests pass (138 unit, 226 integration), green in 3 consecutive runs; typecheck, lint and types clean; the compose image works end to end. All your changes are in: the Origin allow-list (APP_ORIGIN + Vite :5173 only in development, tested both ways), `@fastify/rate-limit` on login (10/min/IP → 429 + Retry-After), and 40P01/40001 → one retry → 503 + Retry-After with an error-handler safety net. R21 is mutation-checked. Bugs: R1 flaky under load since lock_timeout (tests now separate correctness from the timeout), a vacuous fall-back test (now real), a wrong APP_ORIGIN assertion, a `request.host` clash, compose missing APP_ORIGIN, and my wrong Phase 5 file count. Phase 7 questions: plain React + CSS, a single-form availability editor, host-tz display. Waiting for review.
+
+---
+
 <!-- Append new turns below. -->
