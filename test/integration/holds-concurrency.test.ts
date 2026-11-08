@@ -9,7 +9,14 @@ import { APP_SECRET, addEventType, holdRequest, scenario } from '../helpers/scen
  * its own pooled connection, from its own IP with its own Idempotency-Key.
  */
 const db = testDb({ max: 60 });
-const deps = { db, appSecret: APP_SECRET };
+/**
+ * Contention tests isolate CORRECTNESS from the fail-fast timeout: with dozens of requests
+ * queued on one host lock, the default 2.5 s lock_timeout legitimately turns the tail into
+ * 503 HOST_BUSY under a slow/loaded machine (found in Phase 6). The timeout behaviour itself
+ * is asserted separately (holds-lock-timeout, and the burst test in holds-concurrency).
+ */
+const CONTENTION_LOCK_TIMEOUT_MS = 30_000;
+const deps = { db, appSecret: APP_SECRET, lockTimeoutMs: CONTENTION_LOCK_TIMEOUT_MS };
 afterAll(() => db.destroy());
 beforeEach(() => truncateAll(db));
 afterEach(() => assertSeatInvariant(db));
@@ -41,6 +48,19 @@ describe('R1: 50 parallel holds for the last seat of a 1:1 event', () => {
     const occ = await db.selectFrom('occupancies').select('id').where('event_type_id', '=', sc.ev.id).executeTakeFirstOrThrow();
     expect(await seatsTaken(db, occ.id)).toBe(1);
   });
+});
+
+describe('burst on one host with the DEFAULT 2.5 s lock_timeout', () => {
+  it('80 parallel holds: exactly one 201, everyone else 409 or 503 HOST_BUSY — never a 500, never a double booking', async () => {
+    const sc = await scenario(db, { capacity: 1 });
+    const outcomes = await Promise.allSettled(Array.from({ length: 80 }, () => createHold({ db, appSecret: APP_SECRET }, holdRequest(sc))));
+    expect(outcomes.filter((o) => o.status === 'rejected')).toEqual([]);
+    const codes = outcomes.map((o) => (o as PromiseFulfilledResult<{ status: number }>).value.status);
+    expect(codes.filter((c) => c === 201)).toHaveLength(1);
+    expect(codes.every((c) => c === 201 || c === 409 || c === 503)).toBe(true);
+    const occ = await db.selectFrom('occupancies').select('id').where('event_type_id', '=', sc.ev.id).executeTakeFirstOrThrow();
+    expect(await seatsTaken(db, occ.id)).toBe(1);
+  }, 60_000);
 });
 
 describe('R2: group session with capacity 5, 15 parallel holds', () => {

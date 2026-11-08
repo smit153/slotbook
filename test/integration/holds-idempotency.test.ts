@@ -6,7 +6,14 @@ import { assertSeatInvariant } from '../helpers/invariants.js';
 import { APP_SECRET, holdRequest, scenario } from '../helpers/scenario.js';
 
 const db = testDb({ max: 20 });
-const deps = { db, appSecret: APP_SECRET };
+/**
+ * Contention tests isolate CORRECTNESS from the fail-fast timeout: with dozens of requests
+ * queued on one host lock, the default 2.5 s lock_timeout legitimately turns the tail into
+ * 503 HOST_BUSY under a slow/loaded machine (found in Phase 6). The timeout behaviour itself
+ * is asserted separately (holds-lock-timeout, and the burst test in holds-concurrency).
+ */
+const CONTENTION_LOCK_TIMEOUT_MS = 30_000;
+const deps = { db, appSecret: APP_SECRET, lockTimeoutMs: CONTENTION_LOCK_TIMEOUT_MS };
 afterAll(() => db.destroy());
 beforeEach(() => truncateAll(db));
 afterEach(() => assertSeatInvariant(db));
