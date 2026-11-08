@@ -22,7 +22,7 @@ export const holdSecretBodySchema = z.object({ hold_secret: z.string().min(1).ma
 export const confirmRequestSchema = z.object({
   hold_secret: z.string().min(1).max(128),
   name: z.string().trim().min(1).max(200),
-  email: z.email().max(320),
+  email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
   tz: z.string().min(1).max(64),
 });
 export type ConfirmRequestBody = z.infer<typeof confirmRequestSchema>;
