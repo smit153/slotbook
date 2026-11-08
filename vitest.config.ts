@@ -18,6 +18,20 @@ export default defineConfig({
         },
       },
       {
+        // UI tests: jsdom + Testing Library; fetch is routed into the REAL Fastify app and the
+        // real test Postgres (test/web/fetch-shim.ts), so the UI is tested against the real API.
+        test: {
+          name: 'web',
+          include: ['test/web/**/*.test.{ts,tsx}'],
+          environment: 'jsdom',
+          globalSetup: ['test/global-setup.ts'],
+          setupFiles: ['test/web/setup.ts'],
+          fileParallelism: false,
+          testTimeout: 30_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
         test: {
           name: 'integration',
           include: ['test/integration/**/*.test.ts'],

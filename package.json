@@ -18,7 +18,7 @@
     "seed": "tsx --env-file-if-exists=.env src/server/db/seed.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json && tsc -p src/web/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/web/tsconfig.json && tsc -p test/web/tsconfig.json",
     "lint": "eslint .",
     "db:types": "tsx scripts/db-types.ts"
   },
@@ -38,6 +38,9 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@testcontainers/postgresql": "^12.2.1",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
     "@types/luxon": "^3.7.6",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
@@ -47,6 +50,7 @@
     "concurrently": "^10.0.7",
     "eslint": "^10.14.0",
     "globals": "^17.14.0",
+    "jsdom": "^31.0.0",
     "kysely-codegen": "^0.20.0",
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",

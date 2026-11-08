@@ -48,6 +48,10 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
+    files: ['test/web/**/*.{ts,tsx}'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+  },
+  {
     files: ['src/server/services/**/*.ts', 'src/server/engine/**/*.ts'],
     rules: clockRule,
   },
