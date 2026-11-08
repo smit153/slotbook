@@ -323,13 +323,6 @@ held ──confirm──► confirmed ──cancel──► cancelled
 ```
 Enforced once, by the service's `transition()` table (§4.1).
 
-### 5.8 Contention, `lock_timeout` and pool sizing
-- **Every write path starts with `SET LOCAL lock_timeout = 2.5 s`**, implemented as `set_config('lock_timeout', '2500ms', true)` so it is transaction-local and parameterisable. Any lock wait longer than that (idempotency-key row, IP advisory lock, host row, booking row) raises `55P03`. The transaction rolls back and the API answers **503 `HOST_BUSY`** with `Retry-After: 1`. Nothing is stored for the idempotency key, so a same-key retry later is safe.
-- **Why:** each request waiting on a host lock holds a pooled connection for the whole wait. Without a bound, a burst of more than `DB_POOL_MAX` requests for one popular host would take every connection, and requests for *other* hosts would queue behind it. The timeout turns that into a fast, retryable 503 for the busy host only.
-- **Pool sizing:** throughput per host is bounded by about 1 / (hold-transaction time), a few milliseconds. Connections a burst can tie up ≈ min(burst size, `DB_POOL_MAX`), each for at most `lock_timeout`. Defaults: `DB_POOL_MAX = 10`, `lock_timeout = 2.5 s`. Postgres `max_connections` must exceed `DB_POOL_MAX` × app instances, plus admin headroom.
-- **Measured in the load test** (if-time list, §11): throughput and p95 for a single-host burst versus spread across hosts, the 503 rate, and whether a single-host burst raises p95 for other hosts. Results go in the report.
-- **Known gap:** there is no per-host in-process queue in front of the pool, so a burst still briefly uses up to `DB_POOL_MAX` connections, bounded by `lock_timeout`.
-
 ### 5.7 Token hygiene
 - Global `Referrer-Policy: no-referrer`. `Cache-Control: no-store` on token-bearing responses.
 - The manage link is **`/manage#<token>`**, with the token in the URL fragment, which is never sent to the server.
@@ -337,6 +330,13 @@ Enforced once, by the service's `transition()` table (§4.1).
 - Known gap: infra access logs see the API path. The next step would be to accept the token in an `Authorization` header.
 
 ---
+
+### 5.8 Contention, `lock_timeout` and pool sizing
+- **Every write path starts with `SET LOCAL lock_timeout = 2.5 s`**, implemented as `set_config('lock_timeout', '2500ms', true)` so it is transaction-local and parameterisable. Any lock wait longer than that (idempotency-key row, IP advisory lock, host row, booking row) raises `55P03`. The transaction rolls back and the API answers **503 `HOST_BUSY`** with `Retry-After: 1`. Nothing is stored for the idempotency key, so a same-key retry later is safe.
+- **Why:** each request waiting on a host lock holds a pooled connection for the whole wait. Without a bound, a burst of more than `DB_POOL_MAX` requests for one popular host would take every connection, and requests for *other* hosts would queue behind it. The timeout turns that into a fast, retryable 503 for the busy host only.
+- **Pool sizing:** throughput per host is bounded by about 1 / (hold-transaction time), a few milliseconds. Connections a burst can tie up ≈ min(burst size, `DB_POOL_MAX`), each for at most `lock_timeout`. Defaults: `DB_POOL_MAX = 10`, `lock_timeout = 2.5 s`. Postgres `max_connections` must exceed `DB_POOL_MAX` × app instances, plus admin headroom.
+- **Measured in the load test** (if-time list, §11): throughput and p95 for a single-host burst versus spread across hosts, the 503 rate, and whether a single-host burst raises p95 for other hosts. Results go in the report.
+- **Known gap:** there is no per-host in-process queue in front of the pool, so a burst still briefly uses up to `DB_POOL_MAX` connections, bounded by `lock_timeout`.
 
 ## 6. Slot generation and time zones
 
