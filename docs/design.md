@@ -343,6 +343,8 @@ Enforced once, by the service's `transition()` table (§4.1).
 - Global `Referrer-Policy: no-referrer`. `Cache-Control: no-store` on token-bearing responses.
 - The manage link is **`/manage#<token>`**, with the token in the URL fragment, which is never sent to the server.
 - The pino serializer rewrites `/api/bookings/<token>` to `/api/bookings/:token`. `redact` covers `cookie`, `authorization`, `idempotency-key`, `hold_secret` and `manage_token`.
+- **What is logged:** only method, redacted URL and client IP per request (custom `req` serializer), plus `request_id`. Headers and bodies are never serialized. R21 scans real log output after a full journey and finds no hold secret, manage token, session cookie, Idempotency-Key or password; mutation-checked.
+- **CSRF (host writes and login):** SameSite=Lax cookie + JSON-only bodies, plus an **Origin allow-list**: `APP_ORIGIN` (required in production), the Vite dev origins `http://localhost:5173` / `127.0.0.1:5173` when `NODE_ENV=development` (Vite's proxy does not rewrite `Origin`), and `EXTRA_ALLOWED_ORIGINS`. Requests without an `Origin` header (curl, servers) are allowed, since they cannot carry a victim's cookie.
 - Known gap: infra access logs see the API path. The next step would be to accept the token in an `Authorization` header.
 
 ---
@@ -355,6 +357,8 @@ Enforced once, by the service's `transition()` table (§4.1).
 - **Why:** each request waiting on a host lock holds a pooled connection for the whole wait. Without a bound, a burst of more than `DB_POOL_MAX` requests for one popular host would take every connection, and requests for *other* hosts would queue behind it. The timeout turns that into a fast, retryable 503 for the busy host only.
 - **Pool sizing:** throughput per host is bounded by about 1 / (hold-transaction time), a few milliseconds. Connections a burst can tie up ≈ min(burst size, `DB_POOL_MAX`), each for at most `lock_timeout`. Defaults: `DB_POOL_MAX = 10`, `lock_timeout = 2.5 s`. Postgres `max_connections` must exceed `DB_POOL_MAX` × app instances, plus admin headroom.
 - **Measured in the load test** (if-time list, §11): throughput and p95 for a single-host burst versus spread across hosts, the 503 rate, and whether a single-host burst raises p95 for other hosts. Results go in the report.
+- **Testing note (Phase 6):** contention tests run with a long lock timeout so they measure correctness only. A separate burst test with the default 2.5 s asserts the outcomes stay within {201, 409, 503}. With the default, 50 queued holds on one host can legitimately produce 503s on a loaded machine.
+- **Login rate limit** (`@fastify/rate-limit`, 10/min per IP, login route only) uses the plugin's in-memory store, so it is per app instance. A shared store would be needed for strict limits across instances; that is listed as a known gap. The same plugin will be reused for abuse protection.
 - **Known gap:** there is no per-host in-process queue in front of the pool, so a burst still briefly uses up to `DB_POOL_MAX` connections, bounded by `lock_timeout`.
 
 ## 6. Slot generation and time zones
@@ -415,28 +419,53 @@ The host's grid never moves. The guest's view shifts twice, in opposite directio
 
 ---
 
-## 7. API (documented in README; errors are `{error:{code,message}}`)
+## 7. API (as built in Phase 6; errors are always `{error:{code,message}}`)
 
+All bodies are JSON (anything else → 415). Every response carries `X-Request-Id`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY`. Routes marked 🔒 also send `Cache-Control: no-store` and `X-Robots-Tag: noindex, nofollow`.
+
+**Public / guest**
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/hosts/{host}/events/{slug}` | public event info |
-| GET | `/api/hosts/{host}/events/{slug}/slots?from&to&tz` | max 31-day range; returns `seatsLeft` |
-| POST | `/api/holds` | `Idempotency-Key` → `{hold_id, hold_secret, expires_at, server_now}` |
-| POST | `/api/holds/{id}/release` | `{hold_secret}` → `{hold_id, status: 'expired'}` (idempotent) |
-| POST | `/api/holds/{id}/confirm` | `{hold_secret, name, email, tz}` → `{booking, manage_token}` |
-| GET | `/api/bookings/{token}` | view |
-| POST | `/api/bookings/{token}/reschedule` | `{start_at}` |
-| POST | `/api/bookings/{token}/cancel` | `{reason?}` |
-| POST | `/api/auth/login`, `/api/auth/logout`; GET `/api/me` | httpOnly SameSite=Lax cookie |
-| GET/PUT | `/api/host/settings` | timezone |
-| CRUD | `/api/host/event-types` | |
-| GET/PUT | `/api/host/availability` | weekly rules + overrides (replace-all) |
-| GET | `/api/host/bookings?upcoming=1` | |
-| POST | `/api/host/bookings/{id}/cancel` | `{reason}` required |
-| GET | `/api/host/notifications` | the sink (no tokens) |
+| GET | `/api/hosts/{host}/events/{slug}` | event + host info; deactivated → 404 |
+| GET | `/api/hosts/{host}/events/{slug}/slots?from&to&tz` | `from`/`to` required, ≤ 31 days; `tz` defaults to the host's. Slots: `{start_at, end_at, seats_left, local:{date, time, label, ambiguous}}`; `ambiguous` = the wall-clock time occurs twice (fall-back) |
+| POST 🔒 | `/api/holds` | header `Idempotency-Key` required (missing → 400). Body `{host, slug, start_at}` → 201 `{hold_id, hold_secret, expires_at, server_now, start_at, end_at}`. A replay gets `Idempotent-Replayed: true` |
+| POST 🔒 | `/api/holds/{id}/release` | `{hold_secret}` → `{hold_id, status:'expired'}` (idempotent) |
+| POST 🔒 | `/api/holds/{id}/confirm` | `{hold_secret, name, email, tz}` → `{booking, manage_token, manage_url: "/manage#<token>"}` |
+| GET 🔒 | `/api/bookings/{token}` | `{booking}` |
+| POST 🔒 | `/api/bookings/{token}/reschedule` | `{start_at}` |
+| POST 🔒 | `/api/bookings/{token}/cancel` | `{reason?}` |
+
+**Auth** (cookie `sb_session`: HttpOnly, SameSite=Lax, Path=/, 7 days, `Secure` in production; only sha256 stored)
+| Method | Path | Notes |
+|---|---|---|
+| POST 🔒 | `/api/auth/login` | `{email, password}`; Origin-checked; **@fastify/rate-limit: 10/min per IP** → 429 `RATE_LIMITED` + `Retry-After` |
+| POST | `/api/auth/logout` | 204, deletes the session row |
+| GET | `/api/me` | `{host}` or 401 |
+
+**Host** (session required → else 401; writes are Origin-checked and take the host lock)
+| Method | Path | Notes |
+|---|---|---|
+| GET / PUT | `/api/host/settings` | `{name?, timezone?}`; GET also returns the `timezones` picker list |
+| GET / POST | `/api/host/event-types` | create → 201; duplicate slug → 409 `SLUG_TAKEN` |
+| PATCH | `/api/host/event-types/{id}` | any field incl. `active:false`. **No DELETE.** |
+| GET / PUT | `/api/host/availability` | `{weekly:[{weekday,start,end}], overrides:[{date,kind,windows}]}`, replace-all, atomic |
+| GET 🔒 | `/api/host/bookings?upcoming=1` | own bookings; upcoming = confirmed and not started |
+| POST 🔒 | `/api/host/bookings/{id}/cancel` | `{reason}` required |
+| GET 🔒 | `/api/host/notifications` | the sink, latest 100 (no tokens) |
 | GET | `/health` | DB ping |
 
-Codes: 400 · 401/403 · 404 · 409 `SLOT_UNAVAILABLE` / `ALREADY_CONFIRMED` / `INVALID_STATE` · 410 `HOLD_EXPIRED` · 422 `SLOT_NOT_OFFERED` / `IDEMPOTENCY_KEY_REUSED` · 429 `HOLD_LIMIT` · 503 `HOST_BUSY` (lock_timeout; `Retry-After: 1`).
+**Codes:**
+- 400 `VALIDATION` / `INVALID_JSON` / `IDEMPOTENCY_KEY_REQUIRED` / `IDEMPOTENCY_KEY_INVALID`
+- 401 `UNAUTHENTICATED` / `INVALID_CREDENTIALS`
+- 403 `ORIGIN_NOT_ALLOWED`
+- 404 `NOT_FOUND`
+- 409 `SLOT_UNAVAILABLE` / `ALREADY_CONFIRMED` / `INVALID_STATE` / `BOOKING_STARTED` / `EVENT_TYPE_INACTIVE` / `SLUG_TAKEN`
+- 410 `HOLD_EXPIRED`
+- 415 `UNSUPPORTED_MEDIA_TYPE`
+- 422 `SLOT_NOT_OFFERED` / `IDEMPOTENCY_KEY_REUSED` / `INVALID_TIMEZONE` / `INVALID_FIELD` / `OVERLAPPING_WINDOWS` / `INVALID_WINDOW` / `INVALID_OVERRIDE` / `DUPLICATE_DATE`
+- 429 `HOLD_LIMIT` (`Retry-After: 60`) / `RATE_LIMITED`
+- 500 `INTERNAL` (+ `request_id`, never a stack)
+- 503 `HOST_BUSY` / `TRY_AGAIN` (`Retry-After: 1`). A deadlock or serialization failure is retried once inside `writeTx`; one that still reaches the error handler is a 503, never a 500.
 
 ---
 
