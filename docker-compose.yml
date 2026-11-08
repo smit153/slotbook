@@ -27,6 +27,7 @@ services:
       PORT: "3000"
       LOG_LEVEL: info
       TRUST_PROXY: "false"
+      SEED_HOST_PASSWORD: ${SEED_HOST_PASSWORD:-demo1234}
     ports:
       - "${APP_PORT:-3000}:3000"
 
