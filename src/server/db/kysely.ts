@@ -6,6 +6,11 @@ import type { DB } from './types.js';
 // so parse them as numbers. This is a process-wide pg setting.
 pg.types.setTypeParser(pg.types.builtins.INT8, (v) => Number(v));
 
+// `date` columns (date overrides) are calendar days in the HOST's time zone. pg's default
+// turns '2026-11-01' into a JS Date at the *server's* local midnight, which can shift the
+// day. Keep them as plain 'YYYY-MM-DD' strings (codegen runs with --date-parser string).
+pg.types.setTypeParser(pg.types.builtins.DATE, (v) => v);
+
 export type Database = Kysely<DB>;
 
 export interface DbOptions {

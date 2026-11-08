@@ -7,5 +7,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src/server", "src/shared", "test", "*.config.ts"]
+  "include": ["src/server", "src/shared", "test", "scripts", "*.config.ts"]
 }
