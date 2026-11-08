@@ -286,23 +286,39 @@ Why it can't deadlock:
 
 **Refresh-on-zero (one rule):** *when a claim reuses an occupancy that has 0 seats, its capacity, end and buffers are overwritten from the current event type. A session with ≥1 seat keeps its snapshot.*
 
+### 5.1a Release: `POST /api/holds/{id}/release` `{hold_secret}` (added in Phase 5)
+The guest gives a hold back, typically because the UI releases the previous hold when a new slot is picked. Wrong secret → 404. Then lock host → booking, read `T`:
+- `held` → `expired`, which frees the seat immediately; the hold no longer counts toward the per-IP cap. Writes a `released` audit event, no notification.
+- `expired` → 200 with no write (idempotent).
+- `confirmed` or `cancelled` → 409 `INVALID_STATE` (use cancel instead).
+
+Without release, a guest who clicked four slots would hit the 3-hold IP cap. Test: hold 3, release 1, and a 4th hold succeeds.
+
 ### 5.2 Confirm: `POST /api/holds/{id}/confirm`
-Body `{hold_secret, name, email, tz}`. A wrong secret gives **404**, the same as an unknown id. Then lock the host and the booking:
-- `held`, not expired → `confirmed`, `manage_token_hash`, event, outbox `booking.confirmed` → `200 {booking, manage_token}`.
-- `held`, expired → `expired` → **410 HOLD_EXPIRED**.
-- `confirmed`, same guest details, `now() < confirmed_at + 15 min` → replay 200 with the re-derived token. No new notification.
-- `confirmed` otherwise → 409 ALREADY_CONFIRMED. `expired` → 410. `cancelled` → 409.
+Body `{hold_secret, name, email, tz}`. A wrong secret gives **404**, the same as an unknown id. Then lock host → booking, and read `T` after the locks:
+- `held`, `expires_at > T` → `confirmed`, `manage_token_hash`, event, outbox `booking.confirmed` → `200 {booking, manage_token}`.
+- `held`, `expires_at ≤ T` → `expired` (committed) → **410 HOLD_EXPIRED**. This includes a hold that expired while confirm was waiting for the lock.
+- `confirmed`, same **trimmed name and case-insensitive email**, `T < confirmed_at + 15 min` → replay 200 with the re-derived token. No new notification.
+- `confirmed` otherwise → 409 ALREADY_CONFIRMED. `expired` (timed out or released) → 410. `cancelled` → 409.
+- Guest `tz` is accepted if the runtime's `Intl` accepts it, *including* browser aliases such as `Asia/Calcutta`. The email is trimmed and lower-cased before it is stored.
 
 Min notice is **not** re-checked at confirm (§10).
 
 ### 5.3 Reschedule: `POST /api/bookings/{token}/reschedule` `{start_at}`
 Txn: look up by `sha256(token)` and lock the host.
 - **If the booking is already `confirmed` at `start_at`, it is a pure no-op:** return 200 with the current booking. There is no UPDATE, no `booking_events` row and no notification. This is how a retried or double-clicked reschedule behaves.
-- Otherwise: sweep, re-validate the new slot (including min notice), upsert the occupancy, then `UPDATE bookings SET occupancy_id, start_at, end_at`. The trigger releases the old seat and then claims the new one. A violation rolls back the whole txn → 409, and the original stays intact. On success: event + outbox `booking.rescheduled`. The token is unchanged.
+- Otherwise:
+  - Only a `confirmed` booking can move. **Same event type only**, and it must still be active (else 409 `EVENT_TYPE_INACTIVE`).
+  - **A booking that has started (`start_at ≤ T`) cannot be rescheduled** (409 `BOOKING_STARTED`).
+  - Sweep, re-validate the new slot against the rules (min notice applies), upsert the occupancy, then `UPDATE bookings SET occupancy_id, start_at, end_at` inside `SAVEPOINT move`. The trigger releases the old seat and then claims the new one.
+  - A violation rolls back to the savepoint → 409, and the original stays intact.
+  - On success: event + outbox `booking.rescheduled` with `previous_start_at` / `previous_end_at`. The token is unchanged.
 
 ### 5.4 Cancel
 Guest: `POST /api/bookings/{token}/cancel` `{reason?}`. Host: `POST /api/host/bookings/{id}/cancel` `{reason}`.
-`confirmed → cancelled` (the trigger frees the seat) → outbox `booking.cancelled`. If already cancelled → 200 with no write and no notification.
+`confirmed → cancelled` (the trigger frees the seat) → outbox `booking.cancelled`, whose payload includes **`cancelled_by` and `reason`**. If already cancelled → 200 with no write and no notification.
+- **Only upcoming bookings:** once `start_at ≤ T`, neither the guest nor the host can cancel (409 `BOOKING_STARTED`). The brief asks only for cancelling upcoming bookings. No-show tracking is a known gap.
+- `held` or `expired` → 409 `INVALID_STATE`. A host cancelling another host's booking gets 404.
 
 ### 5.5 Clock policy
 - **The database is the only clock** for expiry, min notice, horizon, "upcoming" and the slot engine's `now`.
@@ -332,6 +348,9 @@ Enforced once, by the service's `transition()` table (§4.1).
 ---
 
 ### 5.8 Contention, `lock_timeout` and pool sizing
+- **All write paths run through `writeTx`** (`src/server/services/tx.ts`):
+  - `lock_timeout` is set first.
+  - **Deadlock (40P01) or serialization failure (40001) → the whole transaction is re-run once, then 503 `TRY_AGAIN`.** These are never a raw 500. A rolled-back attempt leaves nothing behind, so re-running is safe.
 - **Every write path starts with `SET LOCAL lock_timeout = 2.5 s`**, implemented as `set_config('lock_timeout', '2500ms', true)` so it is transaction-local and parameterisable. Any lock wait longer than that (idempotency-key row, IP advisory lock, host row, booking row) raises `55P03`. The transaction rolls back and the API answers **503 `HOST_BUSY`** with `Retry-After: 1`. Nothing is stored for the idempotency key, so a same-key retry later is safe.
 - **Why:** each request waiting on a host lock holds a pooled connection for the whole wait. Without a bound, a burst of more than `DB_POOL_MAX` requests for one popular host would take every connection, and requests for *other* hosts would queue behind it. The timeout turns that into a fast, retryable 503 for the busy host only.
 - **Pool sizing:** throughput per host is bounded by about 1 / (hold-transaction time), a few milliseconds. Connections a burst can tie up ≈ min(burst size, `DB_POOL_MAX`), each for at most `lock_timeout`. Defaults: `DB_POOL_MAX = 10`, `lock_timeout = 2.5 s`. Postgres `max_connections` must exceed `DB_POOL_MAX` × app instances, plus admin headroom.
@@ -402,6 +421,7 @@ The host's grid never moves. The guest's view shifts twice, in opposite directio
 | GET | `/api/hosts/{host}/events/{slug}` | public event info |
 | GET | `/api/hosts/{host}/events/{slug}/slots?from&to&tz` | max 31-day range; returns `seatsLeft` |
 | POST | `/api/holds` | `Idempotency-Key` → `{hold_id, hold_secret, expires_at, server_now}` |
+| POST | `/api/holds/{id}/release` | `{hold_secret}` → `{hold_id, status: 'expired'}` (idempotent) |
 | POST | `/api/holds/{id}/confirm` | `{hold_secret, name, email, tz}` → `{booking, manage_token}` |
 | GET | `/api/bookings/{token}` | view |
 | POST | `/api/bookings/{token}/reschedule` | `{start_at}` |
@@ -494,6 +514,8 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 5. A booking for event type A blocks overlapping slots of event type B for the same host.
 6. Group sessions: guests join the same start until capacity. Buffers apply per session.
 7. **Min notice is checked at hold time only** (and at reschedule, which is a new claim). A hold made just inside the notice limit can still be confirmed within its 5 minutes.
+7a. **Started bookings are frozen:** once `start_at ≤ now`, neither guest nor host can reschedule or cancel. A retried reschedule to the booking's current slot is still a 200 no-op.
+7b. **Reschedule stays within the same event type.**
 8. **If the host changes time zone, existing bookings keep their UTC instants.** Only future slot generation uses the new tz. The same applies to availability edits.
 9. Hold = 5 min. Confirm replay window = 15 min. Per-IP active-hold cap = 3. All are config constants.
 10. One host per account. The host slug is public. "Next 30 days" is the guest UI default, capped by the horizon.
@@ -535,6 +557,7 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 - Windows crossing midnight. Per-event custom slot intervals.
 - No ordering guarantee for notifications. Consumers must dedupe and order by `occurred_at`.
 - Real email and calendar sync (out of scope per the brief).
+- **No no-show tracking.** Started bookings can't be cancelled, so a host has no way to mark a no-show.
 - **No purge job.** Bookings are append-only, so expired holds stay as rows forever. A deliberate admin archive/purge job (run outside the app role, with the delete trigger disabled for that session) is a next step.
 
 ---
