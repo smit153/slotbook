@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { deriveHoldSecret, sha256, verifyHoldSecret } from '../../src/server/auth/secrets.js';
+import {
+  deriveHoldSecret, deriveManageToken, looksLikeManageToken, manageTokenHash, sha256, verifyHoldSecret,
+} from '../../src/server/auth/secrets.js';
 
 const SECRET = 'test-app-secret-0123456789abcdef0123';
 const ID = '8a7f3a52-1d1c-4c3e-9a51-6b2f6f0f2a10';
@@ -31,5 +33,26 @@ describe('hold secrets (HMAC-derived, design §5.0)', () => {
 
   it('sha256 gives 32 bytes (the size the bookings token-hash CHECK expects)', () => {
     expect(sha256('x')).toHaveLength(32);
+  });
+});
+
+describe('manage tokens (HMAC-derived, only sha256 stored)', () => {
+  it('are deterministic, 43 url-safe chars, and distinct from the hold secret', () => {
+    const t = deriveManageToken(SECRET, ID);
+    expect(deriveManageToken(SECRET, ID)).toBe(t);
+    expect(looksLikeManageToken(t)).toBe(true);
+    expect(t).not.toBe(deriveHoldSecret(SECRET, ID));
+  });
+
+  it('the stored hash is 32 bytes and is not the token', () => {
+    const t = deriveManageToken(SECRET, ID);
+    expect(manageTokenHash(t)).toHaveLength(32);
+    expect(manageTokenHash(t).toString('base64url')).not.toBe(t);
+  });
+
+  it('looksLikeManageToken rejects anything that is not exactly 43 base64url chars', () => {
+    for (const bad of ['', 'x'.repeat(42), 'x'.repeat(44), `${'x'.repeat(42)}=`, `${'x'.repeat(42)}/`, null, 7]) {
+      expect(looksLikeManageToken(bad)).toBe(false);
+    }
   });
 });

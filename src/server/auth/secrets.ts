@@ -25,3 +25,18 @@ export function verifyHoldSecret(appSecret: string, bookingId: string, candidate
 export function sha256(data: string | Buffer): Buffer {
   return createHash('sha256').update(data).digest();
 }
+
+/** manage_token = b64url(HMAC-SHA256(APP_SECRET, "manage:v1:" || booking_id)) — never stored. */
+export function deriveManageToken(appSecret: string, bookingId: string): string {
+  return hmac(appSecret, `manage:v1:${bookingId}`).toString('base64url');
+}
+
+/** What the database stores and looks up by: sha256 of the token string (32 bytes). */
+export function manageTokenHash(token: string): Buffer {
+  return sha256(token);
+}
+
+/** A manage token is 32 HMAC bytes in base64url: exactly 43 url-safe characters. */
+export function looksLikeManageToken(token: unknown): token is string {
+  return typeof token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(token);
+}
