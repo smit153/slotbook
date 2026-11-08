@@ -1,7 +1,7 @@
 import type { Database } from '../db/kysely.js';
 import { deriveManageToken, manageTokenHash, verifyHoldSecret } from '../auth/secrets.js';
 import { confirmRequestSchema, uuidSchema } from '../../shared/schemas.js';
-import { isKnownTimeZone } from '../../shared/timezones.js';
+import { acceptZone } from './zones.js';
 import { bookingView, enqueueNotification, lockBooking, recordEvent, type BookingView } from './booking-common.js';
 import { failure, type ServiceResult } from './errors.js';
 import { assertTransition } from './transitions.js';
@@ -30,7 +30,7 @@ export const CONFIRM_REPLAY_WINDOW_MS = 15 * 60_000;
 export async function confirmHold(deps: ConfirmDeps, holdId: string, body: unknown): Promise<ServiceResult<Confirmed>> {
   const parsed = confirmRequestSchema.safeParse(body);
   if (!parsed.success) return failure(400, 'VALIDATION', 'hold_secret, name, email and tz are required');
-  if (!isKnownTimeZone(parsed.data.tz)) return failure(400, 'VALIDATION', 'tz must be an IANA time zone');
+  if (!acceptZone(parsed.data.tz)) return failure(400, 'VALIDATION', 'tz must be an IANA time zone');
   if (!uuidSchema.safeParse(holdId).success || !verifyHoldSecret(deps.appSecret, holdId, parsed.data.hold_secret)) {
     return failure(404, 'NOT_FOUND', 'Unknown hold');
   }

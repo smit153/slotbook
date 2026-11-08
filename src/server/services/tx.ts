@@ -80,6 +80,7 @@ export async function writeTx<R>(opts: WriteTxOptions, fn: (trx: Transaction<DB>
         return fn(trx);
       });
     } catch (err) {
+      if (err instanceof AbortTx) return err.result;
       if (isLockTimeout(err)) return failure(503, 'HOST_BUSY', 'This calendar is busy right now; please retry in a moment');
       if (isRetryable(err)) {
         if (attempt < MAX_ATTEMPTS) continue;
@@ -87,5 +88,15 @@ export async function writeTx<R>(opts: WriteTxOptions, fn: (trx: Transaction<DB>
       }
       throw err;
     }
+  }
+}
+
+/**
+ * Throw inside writeTx to ROLL BACK and still answer with a normal result (e.g. a 422 after a
+ * constraint violation in a multi-statement write such as replacing availability).
+ */
+export class AbortTx extends Error {
+  constructor(readonly result: ServiceResult<never>) {
+    super('transaction aborted with a result');
   }
 }
