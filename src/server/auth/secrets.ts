@@ -40,3 +40,22 @@ export function manageTokenHash(token: string): Buffer {
 export function looksLikeManageToken(token: unknown): token is string {
   return typeof token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(token);
 }
+
+/**
+ * waitlist_token = b64url(HMAC-SHA256(APP_SECRET, "waitlist:v1:" || entry_id)) (design §13.4),
+ * never stored. The link is /waitlist#<entry_id>.<token>; the API takes the token in a header.
+ */
+export function deriveWaitlistToken(appSecret: string, entryId: string): string {
+  return hmac(appSecret, `waitlist:v1:${entryId}`).toString('base64url');
+}
+
+/**
+ * Constant-time check. Compares the canonical base64url STRING (not decoded bytes): base64url's
+ * last character carries spare bits, so two different strings can decode to the same bytes.
+ */
+export function verifyWaitlistToken(appSecret: string, entryId: string, candidate: unknown): boolean {
+  if (typeof candidate !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(candidate)) return false;
+  const expected = Buffer.from(deriveWaitlistToken(appSecret, entryId));
+  const given = Buffer.from(candidate);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}

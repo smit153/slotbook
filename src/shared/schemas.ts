@@ -31,3 +31,13 @@ export const rescheduleRequestSchema = z.object({ start_at: instantSchema });
 
 export const guestCancelSchema = z.object({ reason: z.string().trim().max(500).optional() });
 export const hostCancelSchema = z.object({ reason: z.string().trim().min(1).max(500) });
+
+/** POST /api/waitlist (design §13.5). Email trimmed + lower-cased like confirm. */
+export const waitlistJoinSchema = z.object({
+  host: z.string().min(1).max(64),
+  slug: z.string().min(1).max(64),
+  start_at: instantSchema,
+  name: z.string().trim().min(1).max(200),
+  email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
+  tz: z.string().min(1).max(64),
+});
