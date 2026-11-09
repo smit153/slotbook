@@ -1,0 +1,18 @@
+# Override for the k6 load test (scripts/loadtest.sh), on top of docker-compose.yml, run as the
+# separate compose project "slotbook-load":
+#  - Postgres data lives in tmpfs: every run starts empty and nothing is left behind on disk.
+#  - TRUST_PROXY=1: each k6 virtual user sends its own X-Forwarded-For address, so the per-IP
+#    hold cap and the per-IP advisory lock see many clients, as they would behind a real proxy.
+#    (With one shared IP, every hold would also queue on ONE advisory lock and the cap of 3
+#    would turn almost everything into 429: that would measure the abuse limit, not booking.)
+#  - DB_POOL_MAX is configurable to measure pool sizing.
+services:
+  db:
+    volumes: !reset []
+    tmpfs:
+      - /var/lib/postgresql/data
+  app:
+    environment:
+      TRUST_PROXY: "1"
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      APP_ORIGIN: http://localhost:${APP_PORT:-3000}
