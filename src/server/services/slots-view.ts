@@ -6,6 +6,7 @@ import { generateSlots } from '../engine/slots.js';
 import { instantSchema } from '../../shared/schemas.js';
 import { failure, type ServiceResult } from './errors.js';
 import { acceptZone } from './zones.js';
+import { WAITLIST_CAP } from './waitlist.js';
 
 const MAX_RANGE_DAYS = 31;
 
@@ -36,6 +37,8 @@ export interface SlotOut {
   start_at: string;
   end_at: string;
   seats_left: number;
+  /** Only with ?include_full=1, on full slots: the waitlist (design §13.5). `open` = below its cap. */
+  waitlist?: { open: boolean; waiting: number };
   /** In the requested time zone. `ambiguous` = this wall-clock time occurs twice (fall-back night). */
   local: { date: string; time: string; label: string; ambiguous: boolean };
 }
@@ -55,7 +58,10 @@ export function localLabel(instant: Date, tz: string): SlotOut['local'] {
   };
 }
 
-const slotsQuerySchema = z.object({ from: instantSchema, to: instantSchema, tz: z.string().optional() });
+const slotsQuerySchema = z.object({
+  from: instantSchema, to: instantSchema, tz: z.string().optional(),
+  include_full: z.enum(['0', '1', 'true', 'false']).optional(),
+});
 
 /** GET /api/hosts/:host/events/:slug/slots?from&to&tz — labels are computed here (agreed). */
 export async function guestSlots(db: Database, hostSlug: string, eventSlug: string, query: unknown):
@@ -72,10 +78,12 @@ export async function guestSlots(db: Database, hostSlug: string, eventSlug: stri
   if (!ctx) return failure(404, 'NOT_FOUND', 'Unknown host or event type');
   const tz = q.data.tz ?? ctx.host.timezone;
 
-  const slots = generateSlots({ ...ctx.input, from, to }).map((s): SlotOut => ({
+  const includeFull = q.data.include_full === '1' || q.data.include_full === 'true';
+  const slots = generateSlots({ ...ctx.input, from, to, includeFull }).map((s): SlotOut => ({
     start_at: s.startAt.toISOString(),
     end_at: s.endAt.toISOString(),
     seats_left: s.seatsLeft,
+    ...(s.full ? { waitlist: { open: s.full.waiting < WAITLIST_CAP, waiting: s.full.waiting } } : {}),
     local: localLabel(s.startAt, tz),
   }));
 

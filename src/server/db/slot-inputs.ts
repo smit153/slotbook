@@ -81,12 +81,15 @@ export async function loadAvailabilityInput(
       .execute(),
     opts.withOccupancies === false ? Promise.resolve({ rows: [] }) : sql<{
       event_type_id: string; start_at: Date; end_at: Date;
-      blocked_from: Date; blocked_to: Date; capacity: number; live_seats: number;
+      blocked_from: Date; blocked_to: Date; capacity: number; live_seats: number; waiting: number;
     }>`
       SELECT o.event_type_id, o.start_at, o.end_at,
              lower(o.blocked) AS blocked_from, upper(o.blocked) AS blocked_to, o.capacity,
              count(b.id) FILTER (
-               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > ${now}::timestamptz))::int AS live_seats
+               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > ${now}::timestamptz))::int AS live_seats,
+             -- Waitlisted guests own the next free seats (design §13.2), even before the sweep.
+             (SELECT count(*)::int FROM waitlist_entries w
+               WHERE w.event_type_id = o.event_type_id AND w.start_at = o.start_at AND w.status = 'waiting') AS waiting
         FROM occupancies o
         LEFT JOIN bookings b ON b.occupancy_id = o.id
        WHERE o.host_id = ${host.id}
@@ -95,7 +98,9 @@ export async function loadAvailabilityInput(
                                     ${new Date(range.to.getTime() + OCCUPANCY_PAD_MS)}::timestamptz, '[)')
        GROUP BY o.id
       HAVING count(b.id) FILTER (
-               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > ${now}::timestamptz)) > 0`.execute(db),
+               WHERE b.status = 'confirmed' OR (b.status = 'held' AND b.expires_at > ${now}::timestamptz)) > 0
+          OR EXISTS (SELECT 1 FROM waitlist_entries w
+                      WHERE w.event_type_id = o.event_type_id AND w.start_at = o.start_at AND w.status = 'waiting')`.execute(db),
   ]);
 
   const windowsByDate = new Map<string, TimeWindow[]>();
@@ -116,6 +121,7 @@ export async function loadAvailabilityInput(
     blockedFrom: r.blocked_from,
     blockedTo: r.blocked_to,
     liveSeats: r.live_seats,
+    waiting: r.waiting,
     capacity: r.capacity,
   }));
 

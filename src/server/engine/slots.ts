@@ -38,6 +38,8 @@ export interface LiveOccupancy {
   blockedFrom: Date;
   blockedTo: Date;
   liveSeats: number;
+  /** Waitlisted guests (design §13): they own the next free seats, so they count as taken. */
+  waiting?: number;
   capacity: number;
 }
 
@@ -56,12 +58,16 @@ export interface SlotQuery extends AvailabilityInput {
   /** Half-open UTC range [from, to): a slot is returned iff from <= start < to. */
   from: Date;
   to: Date;
+  /** Also return full sessions (seatsLeft 0, `full` set), for the waitlist. Default false. */
+  includeFull?: boolean;
 }
 
 export interface Slot {
   startAt: Date;
   endAt: Date;
   seatsLeft: number;
+  /** Only with includeFull: the session is full (seatsLeft 0) and has this many waiting. */
+  full?: { waiting: number };
 }
 
 const MINUTE = 60_000;
@@ -90,7 +96,7 @@ export function generateSlots(q: SlotQuery): Slot[] {
   const latest = nowMs + ev.horizonDays * DAY;
   const durMs = ev.durationMin * MINUTE;
 
-  const live = q.occupancies.filter((o) => o.liveSeats > 0);
+  const live = q.occupancies.filter((o) => o.liveSeats + (o.waiting ?? 0) > 0);
   const slots: Slot[] = [];
 
   for (const date of hostDaysCovering(fromMs, toMs, q.hostTz)) {
@@ -107,7 +113,7 @@ export function generateSlots(q: SlotQuery): Slot[] {
         if (s < fromMs || s >= toMs) continue;
         if (s < earliest || s > latest) continue;
 
-        const slot = placeSlot(s, s + durMs, ev, live);
+        const slot = placeSlot(s, s + durMs, ev, live, q.includeFull === true);
         if (slot) slots.push(slot);
       }
     }
@@ -122,15 +128,20 @@ export function generateSlots(q: SlotQuery): Slot[] {
  *    (its snapshot times win over the current event-type duration).
  *  - Anything else whose blocked range overlaps ours ([s - before, e + after)) blocks it.
  */
-function placeSlot(s: number, e: number, ev: EventTypeSpec, live: LiveOccupancy[]): Slot | null {
+function placeSlot(s: number, e: number, ev: EventTypeSpec, live: LiveOccupancy[], includeFull: boolean): Slot | null {
   const blockedFrom = s - ev.bufferBeforeMin * MINUTE;
   const blockedTo = e + ev.bufferAfterMin * MINUTE;
   let slot: Slot = { startAt: new Date(s), endAt: new Date(e), seatsLeft: ev.capacity };
 
   for (const o of live) {
     if (o.eventTypeId === ev.id && o.startAt.getTime() === s) {
-      const left = o.capacity - o.liveSeats;
-      if (left <= 0) return null;
+      const left = o.capacity - o.liveSeats - (o.waiting ?? 0);
+      if (left <= 0) {
+        if (!includeFull) return null;
+        // A full session can be waitlisted, unless something else also blocks it (checked below).
+        slot = { startAt: new Date(s), endAt: new Date(o.endAt.getTime()), seatsLeft: 0, full: { waiting: o.waiting ?? 0 } };
+        continue;
+      }
       slot = { startAt: new Date(s), endAt: new Date(o.endAt.getTime()), seatsLeft: left };
       continue;
     }
