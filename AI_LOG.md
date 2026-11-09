@@ -524,4 +524,32 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+#### Turn 21. User
+> Go. Answers:
+> 1. Add the confirm, cancel and reschedule race tests to the loop, especially "hold expires while confirm waits on the lock". It depends on real time passing.
+> 2. Yes, the README is the only copy of the gaps list; design §11 links to it.
+> 3. Yes, remove the scratch clone and its volume.
+>
+> One change: in the README's extensions section, use the brief's extension names. List "Abuse protection (partial)": per-IP hold cap + login rate limit; missing rate limits on other public endpoints, and IP rotation can get around the cap. And "Observability (partial)": structured logs with request IDs + /health; metrics missing. Update both as later phases add to them.
+
+*AI built Phase 9:*
+- *Added `pnpm test:concurrency` (12 files, 86 tests, including the confirm/cancel/reschedule races) and started the 20× loop in the background.*
+- *Read the brief again for the extension names, then wrote the README. Checked its claims against the routes and config, and added a unit test that fails when an env var the code reads is missing from the README table (mutation-checked by deleting two rows).*
+- *Removed `isCanonicalTimeZone`.*
+- *Finished `index.html`. Found that `/favicon.ico` (and any missing file) returned the SPA HTML with a 200, fixed it to a 404, and added the first tests of SPA serving (mutation-checked). Its own first assertion expected the wrong JS content type; the test was fixed, not the server.*
+- *Tested the pnpm build config in scratch copies: without it pnpm 12 refuses to install, so it is needed. esbuild works with its script denied, so all four scripts are now denied, with a comment explaining why.*
+- *Followed the README from a clean clone with `docker compose up --build` and walked the tour over HTTP. Then removed the clone, its volume and its image as approved, after checking the dev volume by name.*
+- *Loop result: 20/20 green, 1,720 executions, 0 failures. Your named test passed 20/20 in 0.75–0.82 s. `pnpm test`: 126 / 144 / 126 s, 401 tests.*
+- *Bash calls hit repeated transient classifier errors mid-phase; it kept editing with the file tools in the meantime.*
+
+#### Turn 21. AI
+> Phase 9 is done (`docs/phases/phase-9.md`).
+> - README with everything asked; extensions under the brief's names; one Known gaps list, which design §11 links to.
+> - Flake check: 20/20 green, no flakes. Residual risk: the confirm-expiry test's 600 ms window on slow CI runners.
+> - `pnpm test` ≈ 2 min 10 s.
+> - Found and fixed `/favicon.ico` returning HTML; all install scripts now denied.
+> - Questions for the CI phase: widen the timing windows; CI job layout; who creates the GitHub repo.
+
+---
+
 <!-- Append new turns below. -->
