@@ -583,4 +583,40 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+#### Turn 23. User
+> Go. Answers:
+> 1. Keep smit sojitra <smitsojitra332003@gmail.com>.
+> 2. Yes, down -v on the e2e project every run.
+> 3. Chromium only.
+> 4. Yes, gitleaks in CI (running the gitleaks Docker image directly is fine) with the false positive ignored.
+> 5. Yes, include the keyboard-only test. Then mark Accessibility as partial in the README: keyboard flow tested, screen reader not.
+>
+> Changes:
+> - Test 6 must not depend on test 1. Create its own booking via the API so every test can run alone.
+> - Use each action's current major version, not v4 by default. Check their releases so CI shows no deprecation warnings.
+> - Besides the known-gap note, log a loud startup warning when APP_SECRET is the compose default.
+
+#### Turn 23b. User (mid-turn)
+> git remote add origin https://github.com/smit153/slotbook.git
+
+*AI added the remote (no push) and confirmed the GitHub repo is public and empty.*
+
+*AI built Phase 10:*
+- *Startup warning for the public compose `APP_SECRET`, with unit, drift and log tests, plus a README gap.*
+- *Playwright 1.64.1 (1.65.0 was only 4 days old). `pnpm e2e` runs a separate compose project of the production build, with `down -v` on that project each run.*
+- *Wrote 7 e2e tests: guest flow, race, zones, wrong clock, pagehide, host with its own API booking, keyboard only. All passed first time, so it mutation-checked the clock and pagehide tests in a rebuilt image; both fail on the mutants.*
+- *e2e results: 5 runs, 35/35 green; each test alone on a fresh stack, 7/7.*
+- *CI: two parallel jobs. Each action's latest release and `action.yml` runtime were checked (checkout v7, setup-node v7, pnpm/action-setup v6, upload-artifact v7, all node24). gitleaks v8.30.1 runs as a Docker step, with `.gitleaksignore` for the false positive. actionlint: 0 errors.*
+- *The CI test job's sequence run locally: 405/405.*
+- *It noted that CI itself cannot be verified without a push, and has not pushed.*
+
+#### Turn 23. AI
+> - Phase 10 is done locally (`docs/phases/phase-10.md`).
+> - Pre-push: no secrets (1 false positive, ignored), `.env` and pdf never committed, one author identity (kept).
+> - e2e: 7 Chromium tests, 5× green, each green alone. CI: two parallel jobs, current majors on node24, gitleaks.
+> - Not done: a real CI run, which needs a push.
+> - Questions: push now? write the k6 plan before or after the first green CI run?
+
+---
+
 <!-- Append new turns below. -->
