@@ -552,4 +552,35 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 13: pre-push checks, Playwright + CI plan
+
+#### Turn 22. User
+> Great phase. Answers:
+> 1. Widen both expiry windows to ~2s now. CI reliability matters more than 1s.
+> 2. Two parallel jobs: tests in one, Playwright against the Docker build in the other.
+> 3. I'll create the public repo myself and give you the remote. Don't push until I say so.
+>
+> Before the first push: scan the full git history for secrets (gitleaks or similar), confirm .env and slotbook.pdf were never committed in any commit, and show me the list of commit authors.
+>
+> Then write the Playwright + CI plan.
+
+*AI widened the windows and ran the pre-push checks:*
+- *Expiry windows 600 ms (confirm) and 1200 ms (holds-clock) → 2000 ms. Moved the "wait until a backend waits on a lock" helper to `test/helpers/locks.ts` and used it instead of fixed sleeps in confirm, holds-validation and holds-lock-timeout.*
+- *Mutation-checked: with `lockedNow()` reading `now()`, both widened tests fail. `pnpm test:concurrency` × 5 afterwards: 5/5 green; the confirm test now takes about 2.2 s.*
+- *History checks: its first command to list every committed path was wrong (`git ls-tree` takes one commit; the extra hashes were read as path filters). It noticed because `.env.example` did not show up, and redid it per commit.*
+- *Results over 93 commits: `.env` and `slotbook.pdf` never committed; only `.env.example` and two `secrets` source files match.*
+- *gitleaks v8.21.2 over all refs: 1 finding, a false positive (the fake idempotency key in the logging test).*
+- *Authors: all 93 commits are by one identity from the global git config, with 0 Co-Authored-By trailers. 4 unreachable objects are its own `git stash` leftovers and are never pushed.*
+
+#### Turn 22. AI
+> - Windows widened; 5× re-run green.
+> - Pre-push report: no secrets (1 false positive), `.env` and `slotbook.pdf` never committed, one author identity listed for the user to confirm.
+> - Playwright + CI plan:
+>   - chromium; tests run against the compose production build in a separate compose project
+>   - a CI workflow with two parallel jobs (tests, e2e) plus a gitleaks step
+>   - pins Playwright 1.64.1 (1.65.0 is only 4 days old)
+> - Questions: author identity, `down -v` for the e2e project, browsers, gitleaks in CI, a keyboard-only test.
+
+---
+
 <!-- Append new turns below. -->
