@@ -127,6 +127,39 @@ Each test sets up what it needs (through the UI or the API) and runs on its own:
 
 The race, clock and leaving-the-page tests were mutation-checked: with the countdown built on the browser clock, or without the `pagehide` release, they fail.
 
+### Load test (k6)
+
+```sh
+pnpm loadtest          # ~12 min; then: pnpm loadtest:report
+```
+
+`scripts/loadtest.sh` runs `grafana/k6:2.3.0` in Docker against the compose **production** build, as the separate project `slotbook-load` (Postgres on tmpfs, so nothing is left on disk). It seeds 1 "busy" host and 200 other hosts, each with a 15-minute 1:1 event type open 24/7. One iteration = GET slots → POST hold → POST confirm.
+
+- **Per-IP cap:** the stack runs with `TRUST_PROXY=1`, and every k6 virtual user sends its own `X-Forwarded-For` address, as clients behind a real proxy would. I chose this over raising the cap through an env var. With a single shared IP, every hold would also queue on one per-IP advisory lock, so the test would measure the abuse limit instead of booking.
+- **Checked after every run:** a read-only check of the database (`scripts/loadtest-verify.ts`) for seat-count drift, over-capacity, overlapping sessions and double bookings.
+
+Full table: [`loadtest/RESULTS.md`](loadtest/RESULTS.md). Measured on the development machine: Intel Core 5 210H (12 threads), 11 GiB RAM, Docker 29.9 on WSL2. App, Postgres 16.15 and k6 all ran on that one machine. The app was one Node 24 process, with the default pool of 10 connections.
+
+| Run (45 s each) | Achieved iterations/s | Requests/s | p95 hold | p95 GET slots | 409 | 503 | Real errors |
+|---|---|---|---|---|---|---|---|
+| many hosts, 25/s | 25.0 | 75 | 69 ms | 42 ms | 0 | 0 | 0 |
+| many hosts, 50/s | 49.1 | 147 | 707 ms | 380 ms | 0 | 0 | 0 |
+| many hosts, 100/s | 48.4 | 145 | 4.56 s | 2.45 s | 1 | 0 | 0 |
+| many hosts, 200/s | 49.1 | 140 | 9.39 s | 5.01 s | 0 | 405 | 0 |
+| one busy host, 20 users | 42.0 | 97 | 489 ms | 160 ms | 1,037 | 0 | 0 |
+| one busy host, 50 users | 48.9 | 93 | 1.27 s | 635 ms | 1,331 | 0 | 0 |
+
+What the numbers show:
+- **No double booking under any load.** About 17,000 bookings were confirmed across the runs, and the database check found 0 double bookings and no seat drift after every run.
+- **The limit on this machine is one Node process.** From about 50 iterations/s (about 150 requests/s), the app container stays at about 100% CPU (one core), while Postgres has headroom. Above that, latency climbs and k6 can't start new iterations on time. Running several app instances (the design is safe with several) would be the next step; it wasn't measured.
+- **A busy host:** 50 users racing for one host's next free slots confirmed 7.7 bookings/s, with 1,331 × 409 ("just taken"). Every loser got a clean 409.
+- **One hot host slows the others:** with the busy host under load, the other hosts' p95 hold latency at 25/s went from 69 ms to 1.94 s. That's the shared pool and the single process. A pool of 30 instead of 10 did not help: background p95 hold was 3.63 s, because the CPU, not the pool, is the limit.
+- **Overload gives 503, not 500**, since a fix that came out of this test (below).
+
+**Bug found by this load test, and fixed:** at 200 iterations/s the first run had **769 real errors** (HTTP 500s). In a 30 s reproduction with app logs kept, **all 178 were 500s caused by pg-pool's `timeout exceeded when trying to connect`**: requests waited more than 5 s for a pooled connection, and that plain error fell through to the 500 handler. It now returns **503 `SERVER_BUSY` with `Retry-After: 1`**. There's a regression test (`test/integration/api/overload.test.ts`) that was red before the fix. After the fix, the same runs gave 0 real errors.
+
+**Not explained:** one later run (pool 30, 400/s, after about 14,000 earlier bookings) logged 26 requests with **no HTTP response at all** (status 0 in k6). A rerun of those scenarios gave 0. The cause isn't confirmed. My guess is requests cut off when k6 stopped the run.
+
 ### CI
 
 `.github/workflows/ci.yml` runs on every push and pull request, in two parallel jobs:
@@ -283,7 +316,7 @@ Named as in the brief. This section is updated as later work adds to them.
 | **Abuse protection** | **Partial.** Built: a per-IP cap of 3 active holds (429 `HOLD_LIMIT`), so one client can't hold every slot; login rate-limited to 10/min per IP (`@fastify/rate-limit`). Missing: rate limits on the other public endpoints (slots, holds, confirm, manage). Rotating IP addresses gets around the cap. The rate-limit store is in memory, so it is per instance. |
 | **Observability** | **Partial.** Built: structured JSON logs (pino) with a request ID on every line and in the `X-Request-Id` header, secrets redacted; `/health` with a database ping. Missing: metrics (bookings, hold expiries, notification lag). |
 | **End-to-end tests and CI** | **Built.** Playwright (Chromium) guest-flow tests against the Docker production build, and a GitHub Actions workflow that runs every test on every push (see Tests → CI). |
-| Load test | Not yet (planned: k6 against the compose build). |
+| **Load test** | **Built.** k6 against the compose production build: many hosts and one busy host, results and a database check per run (see Tests → Load test). |
 | **Accessibility** | **Partial.** The keyboard-only guest flow is tested in a real browser: book, open the manage link and cancel with Tab, Enter and typing only, with a visible focus ring on every control. The pages use semantic lists, labelled controls, `aria-pressed`, `role="alert"`/`"status"`, and the tests find elements by role and name. Missing: no screen-reader walk-through and no automated contrast/ARIA audit. |
 | Live deployment | Not built (see Known gaps). |
 | Waitlist, Reminders, Calendar invite, Host webhooks, Round-robin team events, External busy times, Daily cap and per-guest limit, Embeddable widget | Not built. |
@@ -313,7 +346,8 @@ This is the single list. The design doc links here.
 
 **Operations**
 - **No purge job.** Bookings are append-only (DELETE is blocked), so expired holds stay as rows. Idempotency keys are purged after 24 h. A deliberate admin archive job would be next.
-- **Connection pool under a burst.** Requests waiting for one host's lock each hold a pooled connection for up to 2.5 s (then 503). A burst on one host can therefore slow other hosts. To be measured in the load test.
+- **One Node process is the throughput ceiling** (about 50 booking iterations/s, about 150 requests/s, on the dev machine). Several instances behind a load balancer were not measured. **A burst on one host slows the others:** in the load test, the other hosts' p95 hold went from 69 ms to 1.94 s (shared pool and CPU).
+- **Load-test results are from one machine** running the app, Postgres and k6 together. They aren't production numbers.
 - **End-to-end tests are Chromium only** (no Firefox or WebKit), and they cover the guest flow plus one host check, not every dashboard page.
 - **Accessibility: screen readers not verified.** The keyboard flow is tested; a screen-reader walk-through and an automated audit are not done.
 

@@ -10,7 +10,7 @@ interface Summary { metrics: Record<string, { values: Values }>; state: { testRu
 
 const root = resolve(import.meta.dirname, '../loadtest/results');
 // The newest run folder (scripts/loadtest.sh writes one timestamped folder per run).
-const latest = readdirSync(root).filter((d) => /^\d{8}T\d{6}Z$/.test(d)).sort().at(-1);
+const latest = process.argv[2] ?? readdirSync(root).filter((d) => /^\d{8}T\d{6}Z$/.test(d)).sort().at(-1); // or: pnpm loadtest:report <folder>
 if (!latest) throw new Error('no results yet: run pnpm loadtest');
 const dir = join(root, latest);
 const order = (n: string) => (n.startsWith('many-') ? 0 : n.startsWith('busy') ? 1 : n === 'mixed' ? 2 : n.startsWith('pool30-many') ? 3 : 4) * 1e6 + (Number(n.match(/\d+$/)?.[0]) || 0);

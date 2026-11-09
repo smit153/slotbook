@@ -76,7 +76,12 @@ function classify(res) {
   else if (s === 503) busy503.add(1);
   else if (s === 410) expired410.add(1);
   else if (s === 429) limited429.add(1);
-  else { realErrors.add(1); realErrorRate.add(1); console.error(`real error: ${res.request.method} ${res.url} → ${s} ${String(res.body).slice(0, 200)}`); return; }
+  else {
+    realErrors.add(1); realErrorRate.add(1);
+    // status 0 = no HTTP response (network error, k6 timeout, or a request cut off when the run stops)
+    console.error(`real error: ${res.request.method} ${res.url} → ${s} error_code=${res.error_code} ${res.error || String(res.body).slice(0, 200)}`);
+    return;
+  }
   realErrorRate.add(0);
 }
 
