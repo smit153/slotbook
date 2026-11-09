@@ -687,4 +687,14 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 - *Its report script overwrote `loadtest/RESULTS.md`; it restored the committed copy and changed the script to only print for a named folder.*
 - *CI green on `b9b215c`. Wrote `docs/phases/phase-12.md`.*
 
+*AI built Phase 13 (waitlist):*
+- *It wrote and committed the design addendum (§13) first: an offer is a held booking created in the transaction that frees the seat.*
+- *It wrote 18 race and rule tests (W1–W4) against a service that didn't exist yet, saw them fail, then built the migration, token, handoff, join/status/claim/leave and the read-path reservation, until they passed.*
+- *Its own idempotency test was wrong (a new name per call made the "replay" a different body); it fixed the test.*
+- *Mutation checks: without the cancel handoff, W4b fails; without the hold-path handoff, W2 fails. W1 alone survives either, because both paths protect it.*
+- *Extended the after-every-test invariant to offers, with two meta-tests.*
+- *Built the HTTP routes (token in a header, redacted from logs) and the UI (full times → join the waitlist; a `/waitlist` page with a countdown and confirm), plus a web test and a Playwright test.*
+- *It found that its design wrongly listed capacity edits as freeing a seat (sessions keep their capacity snapshot), and corrected design §13.2.*
+- *Results: 455 tests; e2e 8/8; the waitlist tests ×10 green; CI green on `fe205c6`. Wrote `docs/phases/phase-13.md`.*
+
 <!-- Append new turns below. -->
