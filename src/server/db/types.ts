@@ -11,6 +11,8 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
   : ColumnType<T, T | undefined, T>;
 
+export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
+
 export type Json = JsonValue;
 
 export type JsonArray = JsonValue[];
@@ -24,6 +26,8 @@ export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export type WaitlistStatus = "booked" | "closed" | "lapsed" | "left" | "offered" | "waiting";
 
 export interface AvailabilityRules {
   end_time: string;
@@ -62,6 +66,7 @@ export interface Bookings {
   occupancy_id: string;
   start_at: Timestamp;
   status: BookingStatus;
+  waitlist_entry_id: string | null;
 }
 
 export interface DateOverrides {
@@ -147,6 +152,22 @@ export interface Occupancies {
   updated_at: Generated<Timestamp>;
 }
 
+export interface WaitlistEntries {
+  client_ip: string | null;
+  created_at: Generated<Timestamp>;
+  email: string;
+  event_type_id: string;
+  guest_tz: string;
+  host_id: string;
+  id: Generated<string>;
+  name: string;
+  offered_at: Timestamp | null;
+  resolved_at: Timestamp | null;
+  seq: Generated<Int8>;
+  start_at: Timestamp;
+  status: Generated<WaitlistStatus>;
+}
+
 export interface DB {
   availability_rules: AvailabilityRules;
   booking_events: BookingEvents;
@@ -159,4 +180,5 @@ export interface DB {
   idempotency_keys: IdempotencyKeys;
   notifications: Notifications;
   occupancies: Occupancies;
+  waitlist_entries: WaitlistEntries;
 }

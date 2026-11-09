@@ -18,7 +18,7 @@ export function testDatabaseUrl(): string {
  * no-delete trigger fires — safe because bookings and occupancies are truncated together.
  */
 export async function truncateAll(db: Database): Promise<void> {
-  await sql`TRUNCATE notifications, idempotency_keys, booking_events, bookings, occupancies,
+  await sql`TRUNCATE notifications, idempotency_keys, booking_events, bookings, waitlist_entries, occupancies,
     date_override_windows, date_overrides, availability_rules, event_types, host_sessions, hosts
     RESTART IDENTITY CASCADE`.execute(db);
 }
