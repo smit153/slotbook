@@ -189,14 +189,14 @@ Secrets: the hold secret and the manage token are HMACs derived from `APP_SECRET
 
 JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every response has `X-Request-Id`. Routes marked 🔒 also send `Cache-Control: no-store` and `X-Robots-Tag: noindex`.
 
-**Rate limits (per client IP, per minute):** event info 60, slots 60, holds 20, release 30, confirm 20, manage view 30, reschedule 20, cancel 20, login 10. Over a limit: **429 `RATE_LIMITED`** with `Retry-After`. The client IP follows the same `TRUST_PROXY` rule as the hold cap, so `X-Forwarded-For` can't be spoofed. `RATE_LIMIT_MULTIPLIER` scales all of them (the k6 setup uses 1000).
+**Rate limits (per client IP, per minute):** event info 60, slots 60, holds 20, release 30, confirm 20, manage view 30, reschedule 20, cancel 20, waitlist join 10, waitlist status 60, claim 20, leave 20, login 10. Over a limit: **429 `RATE_LIMITED`** with `Retry-After`. The client IP follows the same `TRUST_PROXY` rule as the hold cap, so `X-Forwarded-For` can't be spoofed. `RATE_LIMIT_MULTIPLIER` scales all of them (the k6 setup uses 1000).
 
 **Public / guest**
 
 | Method | Path | Body → response |
 |---|---|---|
 | GET | `/api/hosts/{host}/events/{slug}` | event type + host name and zone |
-| GET | `/api/hosts/{host}/events/{slug}/slots?from&to&tz` | ISO `from`/`to` (≤ 31 days), IANA `tz` → `{slots:[{start_at, end_at, seats_left, local:{date, time, label, ambiguous}}]}`. `ambiguous` marks a wall time that occurs twice (DST fall-back), shown as `01:00 EDT` / `01:00 EST` |
+| GET | `/api/hosts/{host}/events/{slug}/slots?from&to&tz[&include_full=1]` | ISO `from`/`to` (≤ 31 days), IANA `tz` → `{slots:[{start_at, end_at, seats_left, local:{date, time, label, ambiguous}}]}`. `ambiguous` marks a wall time that occurs twice (DST fall-back), shown as `01:00 EDT` / `01:00 EST`. With `include_full=1`, full times are listed too, with `seats_left: 0` and `waitlist: {open, waiting}` |
 | POST 🔒 | `/api/holds` | header `Idempotency-Key`; `{host, slug, start_at}` → 201 `{hold_id, hold_secret, expires_at, server_now, start_at, end_at}`. A replay adds `Idempotent-Replayed: true` |
 | POST 🔒 | `/api/holds/{id}/confirm` | `{hold_secret, name, email, tz}` → `{booking, manage_token, manage_url}` |
 | POST 🔒 | `/api/holds/{id}/release` | `{hold_secret}` → `{hold_id, status:"expired"}` |
@@ -218,6 +218,10 @@ JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every respo
 | GET 🔒 | `/api/host/bookings?upcoming=1` | |
 | POST 🔒 | `/api/host/bookings/{id}/cancel` | `{reason}` (required for hosts) |
 | GET 🔒 | `/api/host/notifications` | the notifications sink |
+| POST 🔒 | `/api/waitlist` | header `Idempotency-Key`; `{host, slug, start_at, name, email, tz}` → 201 `{entry_id, waitlist_token, waitlist_url, position}`; only for a full time (409 `SLOT_AVAILABLE` otherwise) |
+| GET 🔒 | `/api/waitlist/{id}` | header `Waitlist-Token` → `{status, position, offer, slot}` |
+| POST 🔒 | `/api/waitlist/{id}/claim` | header `Waitlist-Token` → `{booking, manage_token, manage_url}`; 410 `OFFER_EXPIRED` |
+| POST 🔒 | `/api/waitlist/{id}/leave` | header `Waitlist-Token` |
 | GET | `/health` | database ping |
 | GET | `/metrics` | Prometheus text: bookings by status, active holds, hold expiries by cause, releases, pending notifications and notification lag, 429s per route. Needs `Authorization: Bearer $METRICS_TOKEN` when that is set; without a token it is open in development and 404 in production |
 
@@ -324,7 +328,8 @@ Named as in the brief. This section is updated as later work adds to them.
 | **Load test** | **Built.** k6 against the compose production build: many hosts and one busy host, results and a database check per run (see Tests → Load test). |
 | **Accessibility** | **Partial.** The keyboard-only guest flow is tested in a real browser: book, open the manage link and cancel with Tab, Enter and typing only, with a visible focus ring on every control. The pages use semantic lists, labelled controls, `aria-pressed`, `role="alert"`/`"status"`, and the tests find elements by role and name. Missing: no screen-reader walk-through and no automated contrast/ARIA audit. |
 | Live deployment | Not built (see Known gaps). |
-| Waitlist, Reminders, Calendar invite, Host webhooks, Round-robin team events, External busy times, Daily cap and per-guest limit, Embeddable widget | Not built. |
+| **Waitlist** | **Built.** A full time can be waitlisted from the booking page. When a seat frees up (cancel, reschedule away, an expired hold or offer), the next guest gets a **15-minute hold created in the same transaction**, so the seat is never visibly free to the public. Guests follow it through a private link (`/waitlist#id.token`, HMAC-derived, never stored) and confirm there. FIFO, one entry per email per slot, 10 per slot, 3 per IP, no offers inside min notice, offers don't count toward the hold cap. Design §13. |
+| Reminders, Calendar invite, Host webhooks, Round-robin team events, External busy times, Daily cap and per-guest limit, Embeddable widget | Not built. |
 
 ---
 
@@ -341,6 +346,8 @@ This is the single list. The design doc links here.
 - **No windows that cross midnight**, and no per-event slot interval (the step is always the duration).
 - **No host sign-up, password reset or multiple hosts per account.** There is one seeded login.
 - **Randomized operation test (R25) not written.** The invariant check runs after every test instead.
+
+- **Waitlist abuse:** joining needs no account, so fake emails from many IPs can fill a list (10 per slot) and let each 15-minute offer lapse, delaying a real guest by up to 2.5 h for one seat. Offers aren't emailed yet (the `waitlist.offered` outbox row is written); guests find out by keeping their waitlist page open.
 
 **Security trade-offs**
 - **Manage tokens can't be revoked or rotated individually**, and there is no `APP_SECRET` rotation. Changing the secret invalidates all links at once.

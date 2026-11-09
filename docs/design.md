@@ -643,9 +643,9 @@ Seats free up in five ways:
 - **reschedule away** (the old session)
 - **an expired hold**, public or offer, when a write path sweeps it
 - **release** (a guest gives a hold back)
-- **a host edit that raises capacity**
+- ~~a host edit that raises capacity~~ **(corrected while building):** an edit does **not** free a seat in an existing session. A session keeps its capacity *snapshot* while seats are taken (the refresh-on-zero rule, §4), so raising an event type's capacity only affects sessions that are empty or new. Host event-type edits therefore don't call the handoff.
 
-Every write path that takes the host lock (hold, confirm, release, cancel, reschedule, the sweeper, host event-type edits, the waitlist endpoints) ends with one shared step, `handOffFreeSeats(trx, hostId, T)`, run **before COMMIT**:
+Every write path that frees or claims a seat under the host lock (hold, confirm, release, cancel, reschedule, the sweeper, the waitlist endpoints) runs one shared step, `handOffFreeSeats(trx, hostId, T)`, run **before COMMIT** (the hold, reschedule and join paths run it *before* their own claim, so waitlisted guests are served first):
 1. For every session of the host that has `waiting` entries, compute its stored free seats: `capacity − seats_taken`, after the transaction's own sweep.
 2. Give each free seat, in FIFO order, to the next `waiting` entry: insert an offer, mark the entry `offered`, and write a `waitlist.offered` notification row, all in a SAVEPOINT. If the session can't be claimed (a constraint fires), the entry stays waiting.
 3. Mark an `offered` entry whose offer booking is now `expired` as **`lapsed`**. Its seat is passed on in step 2 of the *same* transaction.
