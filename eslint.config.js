@@ -36,7 +36,7 @@ export const clockRule = {
 };
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'coverage/**', 'node_modules/**'] },
+  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', 'playwright-report/**', 'test-results/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -46,6 +46,11 @@ export default tseslint.config(
   {
     files: ['src/web/**/*.{ts,tsx}'],
     languageOptions: { globals: globals.browser },
+  },
+  {
+    // Playwright specs: Node code, plus callbacks that run in the page (page.evaluate).
+    files: ['e2e/**/*.ts'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
   {
     files: ['test/web/**/*.{ts,tsx}'],
