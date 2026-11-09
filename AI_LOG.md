@@ -619,4 +619,11 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 14: first push, first CI run, k6 plan
+
+#### Turn 24. User
+> Yes, push now and watch the first CI run. Report each job's result, time and any warnings. If anything fails, fix it before anything else.
+>
+> While CI runs, write the k6 load test plan, but don't start until CI is green.
+
 <!-- Append new turns below. -->
