@@ -13,6 +13,10 @@ services:
       - /var/lib/postgresql/data
   app:
     environment:
+      # The per-IP rate limits stay ON but 1000x higher: k6 virtual users are deliberately
+      # closed-loop bots, and at real limits the test would measure the limiter, not booking.
+      # (The limits themselves are tested in test/integration/api/rate-limits.test.ts.)
+      RATE_LIMIT_MULTIPLIER: "1000"
       TRUST_PROXY: "1"
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       APP_ORIGIN: http://localhost:${APP_PORT:-3000}
