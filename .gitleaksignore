@@ -1,0 +1,5 @@
+# Reviewed gitleaks findings that are not secrets (one fingerprint per line).
+#
+# test/integration/api/logging.test.ts:26 is the made-up Idempotency-Key 'idem-key-SECRET-0123456789'
+# that the R21 test sends and then asserts never appears in the logs. Not a credential.
+ebe6b243498f1b493e80dde24a82b983dd4edbac:test/integration/api/logging.test.ts:generic-api-key:26
