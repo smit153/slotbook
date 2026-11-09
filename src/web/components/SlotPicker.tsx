@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, type Slot, type SlotsResponse } from '../lib/api.js';
 import { formatDate, groupByDay, nextDaysRange, slotButtonLabel, zoneAbbr } from '../lib/time.js';
 import { ErrorBanner } from './ErrorBanner.js';
+import { watchSlots } from '../lib/slot-events.js';
 import { TimeZoneSelect } from './TimeZoneSelect.js';
 
 /**
@@ -24,6 +25,12 @@ export function SlotPicker({ host, slug, tz, onTzChange, onPick, busy, refreshKe
   const [data, setData] = useState<SlotsResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [day, setDay] = useState<string | null>(null);
+  // Live updates (Phase 14): the stream says "slots changed" and we refetch (throttled to ≤ 1 per 5 s).
+  const [liveKey, setLiveKey] = useState(0);
+  useEffect(() => watchSlots({
+    url: `/api/hosts/${encodeURIComponent(host)}/events/${encodeURIComponent(slug)}/stream`,
+    onChange: () => setLiveKey((k) => k + 1),
+  }), [host, slug]);
   // Held in a ref so an inline callback from the parent does not re-trigger the fetch.
   const onLoadedRef = useRef(onLoaded);
   onLoadedRef.current = onLoaded;
@@ -36,7 +43,7 @@ export function SlotPicker({ host, slug, tz, onTzChange, onPick, busy, refreshKe
       .then((r) => { if (live) { setData(r); onLoadedRef.current?.(r); } })
       .catch((e: unknown) => { if (live) setError(e); });
     return () => { live = false; };
-  }, [host, slug, tz, refreshKey, withWaitlist]);
+  }, [host, slug, tz, refreshKey, withWaitlist, liveKey]);
 
   const days = data ? groupByDay(data.slots, (s) => s.local.date) : [];
   const current = days.find((d) => d.date === day) ?? days[0];
