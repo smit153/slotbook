@@ -6,6 +6,7 @@ const MESSAGES: Record<string, string> = {
   HOLD_EXPIRED: 'Your hold expired. Please pick a time again.',
   HOLD_LIMIT: 'You are holding too many times at once. Finish or wait a few minutes.',
   HOST_BUSY: 'This calendar is busy right now. Please try again in a moment.',
+  SERVER_BUSY: 'We are very busy right now. Please try again in a moment.',
   TRY_AGAIN: 'That collided with another request. Please try again.',
   BOOKING_STARTED: 'This booking has already started, so it can no longer be changed.',
   ORIGIN_NOT_ALLOWED: 'This request came from an unexpected page. Reload and try again.',

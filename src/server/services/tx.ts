@@ -39,6 +39,16 @@ export function isLockTimeout(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === '55P03';
 }
 
+/**
+ * Every pooled connection stayed busy longer than the pool's connectionTimeoutMillis (overload).
+ * pg-pool signals this with a plain Error and no code, so the message is the only marker; the
+ * test (test/integration/api/overload.test.ts) uses the real pg-pool, so a changed message in a
+ * pg upgrade fails it. Found by the k6 load test, where it surfaced as 500s.
+ */
+export function isPoolTimeout(err: unknown): boolean {
+  return err instanceof Error && err.message === 'timeout exceeded when trying to connect';
+}
+
 /** Deadlock victim or serialization failure: safe to re-run the whole transaction once. */
 export function isRetryable(err: unknown): boolean {
   const code = (err as { code?: string } | null)?.code;

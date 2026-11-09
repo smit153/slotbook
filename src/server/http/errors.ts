@@ -1,5 +1,5 @@
 import type { FastifyError, FastifyInstance } from 'fastify';
-import { isLockTimeout, isRetryable } from '../services/tx.js';
+import { isLockTimeout, isPoolTimeout, isRetryable } from '../services/tx.js';
 
 const FASTIFY_CODES: Record<string, string> = {
   FST_ERR_CTP_INVALID_MEDIA_TYPE: 'UNSUPPORTED_MEDIA_TYPE',
@@ -19,6 +19,12 @@ export function installErrorHandling(app: FastifyInstance): void {
       req.log.warn({ code: err.code }, 'transient database conflict reached the error handler');
       reply.header('Retry-After', '1');
       return reply.code(503).send({ error: { code: isLockTimeout(err) ? 'HOST_BUSY' : 'TRY_AGAIN', message: 'Please retry in a moment' } });
+    }
+    if (isPoolTimeout(err)) {
+      // Overload: no DB connection became free in time. Nothing was written; retrying is safe.
+      req.log.warn('database pool exhausted (no connection within connectionTimeoutMillis)');
+      reply.header('Retry-After', '1');
+      return reply.code(503).send({ error: { code: 'SERVER_BUSY', message: 'Too busy right now; please retry in a moment' } });
     }
     if (err.validation) return reply.code(400).send({ error: { code: 'VALIDATION', message: err.message } });
     const status = err.statusCode ?? 500;
