@@ -28,6 +28,10 @@ const ROUTES: Array<[keyof typeof RATE_LIMITS, Req]> = [
   ['bookingView', { method: 'GET', url: `/api/bookings/${TOKEN}` }],
   ['reschedule', { method: 'POST', url: `/api/bookings/${TOKEN}/reschedule`, payload: {} }],
   ['cancel', { method: 'POST', url: `/api/bookings/${TOKEN}/cancel`, payload: {} }],
+  ['waitlistJoin', { method: 'POST', url: '/api/waitlist', payload: {} }], // no Idempotency-Key → 400
+  ['waitlistView', { method: 'GET', url: `/api/waitlist/${UUID}` }],
+  ['waitlistClaim', { method: 'POST', url: `/api/waitlist/${UUID}/claim` }],
+  ['waitlistLeave', { method: 'POST', url: `/api/waitlist/${UUID}/leave` }],
   ['login', { method: 'POST', url: '/api/auth/login', payload: { email: 'x@example.test', password: 'nope' }, headers: { origin: TEST_ORIGIN } }],
 ];
 

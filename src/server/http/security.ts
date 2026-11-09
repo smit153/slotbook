@@ -24,8 +24,8 @@ export const logSerializers = {
 
 /** Belt and braces in case a header or body object is logged explicitly somewhere. */
 export const logRedactPaths = [
-  'req.headers.cookie', 'req.headers.authorization', 'req.headers["idempotency-key"]',
-  'res.headers["set-cookie"]', '*.hold_secret', '*.manage_token', '*.password',
+  'req.headers.cookie', 'req.headers.authorization', 'req.headers["idempotency-key"]', 'req.headers["waitlist-token"]',
+  'res.headers["set-cookie"]', '*.hold_secret', '*.manage_token', '*.waitlist_token', '*.password',
 ];
 
 export function installSecurityHeaders(app: FastifyInstance): void {

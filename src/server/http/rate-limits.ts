@@ -17,6 +17,10 @@ export const RATE_LIMITS = {
   bookingView: 30,
   reschedule: 20,
   cancel: 20,
+  waitlistJoin: 10,
+  waitlistView: 60, // the waitlist page polls; Phase 14 pushes changes instead
+  waitlistClaim: 20,
+  waitlistLeave: 20,
   login: 10,
 } as const;
 export type LimitName = keyof typeof RATE_LIMITS;
