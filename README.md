@@ -64,7 +64,16 @@ pnpm test
 
 One command, and Docker is the only requirement. It starts a throwaway `postgres:16-alpine` with Testcontainers, migrates it and runs everything against it. Set `TEST_DATABASE_URL` to use an existing database instead, e.g. a CI service container.
 
-<!-- TIMING -->
+On the development machine (Intel Core 5 210H, 12 threads, 11 GiB RAM, Docker on WSL2), the full run (401 tests) takes **about 2 min 10 s** end to end. Three runs took 126 s, 144 s and 126 s. Roughly:
+
+| Part | Time |
+|---|---|
+| unit | 4 s |
+| integration | 96 s |
+| web | 31 s |
+| starting and migrating each Postgres container | about 6 s |
+
+`pnpm test:concurrency` takes about 38 s.
 
 | Project | Where | What |
 |---|---|---|
