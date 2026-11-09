@@ -23,12 +23,17 @@ export APP_SECRET
 DURATION="${DURATION:-45s}"
 RATES="${RATES:-25 50 100 200}"
 HOSTS="${HOSTS:-200}"
+PHASES="${PHASES:-many busy mixed pool}" # subset, e.g. PHASES=many RATES=200
 COMPOSE=(docker compose -f docker-compose.yml -f loadtest/compose.load.yml)
 DB_URL="postgres://slotbook:slotbook@localhost:${DB_PORT}/slotbook"
 RESULTS="$PWD/loadtest/results/$(date -u +%Y%m%dT%H%M%SZ)" # one folder per run; the report reads the latest
 
 mkdir -p "$RESULTS" && chmod 777 "$RESULTS" # the k6 container runs as a non-root user
-teardown() { "${COMPOSE[@]}" down --remove-orphans > /dev/null 2>&1 || true; }
+teardown() {
+  # Keep the app's logs (errors carry request_id) before the containers go away.
+  [ -d "${RESULTS:-}" ] && "${COMPOSE[@]}" logs --no-color app > "$RESULTS/app.log" 2>&1 || true
+  "${COMPOSE[@]}" down --remove-orphans > /dev/null 2>&1 || true
+}
 trap teardown EXIT
 
 wait_healthy() {
@@ -52,16 +57,19 @@ wait_healthy
 DATABASE_URL="$DB_URL" pnpm -s exec tsx scripts/loadtest-seed.ts "$HOSTS"
 "${COMPOSE[@]}" exec -T db psql -U slotbook -d slotbook -tAc "SELECT 'postgres ' || current_setting('server_version') || ', max_connections ' || current_setting('max_connections')" | tee "$RESULTS/env.txt"
 
-for r in $RATES; do run "many-$r" SCENARIO=many "RATE=$r"; done
-run busy-20 SCENARIO=busy VUS=20
-run busy-50 SCENARIO=busy VUS=50
-run mixed SCENARIO=mixed VUS=50 RATE=25
+has() { [[ " $PHASES " == *" $1 "* ]]; }
+if has many; then for r in $RATES; do run "many-$r" SCENARIO=many "RATE=$r"; done; fi
+if has busy; then run busy-20 SCENARIO=busy VUS=20; run busy-50 SCENARIO=busy VUS=50; fi
+if has mixed; then run mixed SCENARIO=mixed VUS=50 RATE=25; fi
 
 # Pool sizing: same app, bigger pool.
-top="${RATES##* }"
-DB_POOL_MAX=30 "${COMPOSE[@]}" up -d app
-wait_healthy
-run "pool30-many-$top" SCENARIO=many "RATE=$top"
-run pool30-mixed SCENARIO=mixed VUS=50 RATE=25
+if has pool; then
+  top="${RATES##* }"
+  "${COMPOSE[@]}" logs --no-color app > "$RESULTS/app-pool10.log" 2>&1 || true
+  DB_POOL_MAX=30 "${COMPOSE[@]}" up -d app
+  wait_healthy
+  run "pool30-many-$top" SCENARIO=many "RATE=$top"
+  run pool30-mixed SCENARIO=mixed VUS=50 RATE=25
+fi
 
 echo "[loadtest] done; results in ${RESULTS#$PWD/}"
