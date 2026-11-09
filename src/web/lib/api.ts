@@ -16,6 +16,8 @@ export interface ApiOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   idempotencyKey?: string;
+  /** Extra request headers (e.g. Waitlist-Token). */
+  headers?: Record<string, string>;
   /** Best effort, survives page unload (used for releasing a hold on pagehide). */
   keepalive?: boolean;
   /** Injectable for tests. */
@@ -30,6 +32,7 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' };
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
+  Object.assign(headers, opts.headers);
 
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(path, {
@@ -64,7 +67,17 @@ export interface Slot {
   start_at: string;
   end_at: string;
   seats_left: number;
+  /** Only when slots were requested with include_full=1, on full slots (design §13.5). */
+  waitlist?: { open: boolean; waiting: number };
   local: { date: string; time: string; label: string; ambiguous: boolean };
+}
+export interface WaitlistJoined { entry_id: string; waitlist_token: string; waitlist_url: string; position: number }
+export interface WaitlistState {
+  status: 'waiting' | 'offered' | 'booked' | 'lapsed' | 'left' | 'closed';
+  position: number | null;
+  offer: { expires_at: string; server_now: string } | null;
+  name: string;
+  slot: { start_at: string; end_at: string; host: { slug: string; name: string }; event_type: { slug: string; name: string; duration_min: number } };
 }
 export interface EventInfo {
   host: { slug: string; name: string; timezone: string };

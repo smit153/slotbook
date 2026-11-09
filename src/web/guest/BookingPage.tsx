@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router';
-import { api, ApiError, newIdempotencyKey, type Confirmed, type Hold, type Slot, type SlotsResponse } from '../lib/api.js';
+import { api, ApiError, newIdempotencyKey, type Confirmed, type Hold, type Slot, type SlotsResponse, type WaitlistJoined } from '../lib/api.js';
 import { deadlineFrom } from '../lib/countdown.js';
 import { browserZone, formatDateTime } from '../lib/time.js';
 import { ErrorBanner, Notice } from '../components/ErrorBanner.js';
@@ -28,6 +28,10 @@ export function BookingPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [done, setDone] = useState<Confirmed | null>(null);
+  // Waitlist (design §13): a full time picked → join form; one Idempotency-Key per attempt.
+  const [waitSlot, setWaitSlot] = useState<Slot | null>(null);
+  const waitKey = useRef<string>('');
+  const [joined, setJoined] = useState<WaitlistJoined | null>(null);
 
   // Leaving the page with a hold: give it back (keepalive survives the unload).
   useEffect(() => {
@@ -41,6 +45,14 @@ export function BookingPage() {
    * (e.g. 409, someone was faster), the guest still has the slot they had.
    */
   async function pick(slot: Slot) {
+    if (slot.waitlist) {
+      setError(null); setNotice(null);
+      if (holdRef.current) { setNotice('You already hold a time. Confirm it (or let it go) before joining a waitlist.'); return; }
+      setWaitSlot(slot);
+      waitKey.current = newIdempotencyKey();
+      return;
+    }
+    setWaitSlot(null);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -91,6 +103,36 @@ export function BookingPage() {
     }
   }
 
+  async function joinWaitlist(e: FormEvent) {
+    e.preventDefault();
+    if (!waitSlot) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<WaitlistJoined>('/api/waitlist', {
+        method: 'POST', idempotencyKey: waitKey.current,
+        body: { host, slug, start_at: waitSlot.start_at, name, email, tz },
+      });
+      setJoined(r);
+    } catch (err) {
+      setError(err);
+      if (err instanceof ApiError && err.code === 'SLOT_AVAILABLE') { setWaitSlot(null); setRefreshKey((k) => k + 1); }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (joined && waitSlot) {
+    return (
+      <main className="narrow">
+        <h1>You're on the waitlist</h1>
+        <p>{formatDateTime(waitSlot.start_at, tz)} · position {joined.position}</p>
+        <p>If a seat frees up, it is held for you for 15 minutes. Keep this private link to see and confirm your offer:</p>
+        <p><a href={joined.waitlist_url} className="waitlist-link">{`${location.origin}${joined.waitlist_url}`}</a></p>
+      </main>
+    );
+  }
+
   if (done) {
     const link = `${location.origin}${done.manage_url}`;
     return (
@@ -113,7 +155,17 @@ export function BookingPage() {
       {notice && <Notice>{notice}</Notice>}
       <div className="booking">
         <SlotPicker host={host} slug={slug} tz={tz} onTzChange={setTz} onPick={pick} busy={busy}
-          refreshKey={refreshKey} selectedStart={hold?.start_at} onLoaded={setInfo} />
+          refreshKey={refreshKey} selectedStart={hold?.start_at} onLoaded={setInfo} withWaitlist />
+        {waitSlot && !hold && (
+          <form className="hold" onSubmit={joinWaitlist} aria-label="Join the waitlist">
+            <p><strong>{formatDateTime(waitSlot.start_at, tz)}</strong> is full. Join the waitlist: if a seat frees up, it is held for you.</p>
+            <label htmlFor="wait-name">Name</label>
+            <input id="wait-name" required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
+            <label htmlFor="wait-email">Email</label>
+            <input id="wait-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            <button type="submit" disabled={busy}>Join waitlist</button>
+          </form>
+        )}
         {hold && (
           <form className="hold" onSubmit={confirm} aria-label="Your details">
             <p>

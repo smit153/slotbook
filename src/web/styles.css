@@ -52,3 +52,4 @@ button.day.selected, button.time.selected { background: var(--accent); color: #f
 .manage-link { word-break: break-all; }
 .row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
 .row label { margin: 0; }
+button.time.full { color: var(--muted, #5b6475); border-style: dashed; }

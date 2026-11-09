@@ -6,7 +6,7 @@ import { testDb, truncateAll } from '../../helpers/db.js';
 import { assertSeatInvariant } from '../../helpers/invariants.js';
 import { book } from '../../helpers/flows.js';
 import { makeApp } from '../../helpers/app.js';
-import { APP_SECRET, scenario, type Scenario } from '../../helpers/scenario.js';
+import { scenario, type Scenario } from '../../helpers/scenario.js';
 import { cancelByGuest } from '../../../src/server/services/cancel.js';
 
 /** Waitlist over HTTP (design §13.5): slots with include_full, join, status, claim; no token in logs. */
@@ -48,7 +48,7 @@ describe('waitlist over HTTP', () => {
     expect((await status(waitlist_token)).json()).toMatchObject({ status: 'waiting', position: 1, offer: null });
     expect(slotAt((await app.inject({ method: 'GET', url: slotsUrl(sc, '&include_full=1') })).json(), sc)).toMatchObject({ waitlist: { waiting: 1 } });
 
-    await cancelByGuest({ db, appSecret: APP_SECRET }, b.token, {});
+    await cancelByGuest({ db }, b.token, {});
     const offered = (await status(waitlist_token)).json();
     expect(offered.status).toBe('offered');
     expect(Date.parse(offered.offer.expires_at)).toBeGreaterThan(Date.parse(offered.offer.server_now));
@@ -72,7 +72,7 @@ describe('waitlist over HTTP', () => {
     const app = await makeApp(db);
     const w1 = (await joinHttp(app, sc, 'one@example.test')).json();
     await joinHttp(app, sc, 'two@example.test');
-    await cancelByGuest({ db, appSecret: APP_SECRET }, b.token, {});
+    await cancelByGuest({ db }, b.token, {});
     await sql`UPDATE bookings SET expires_at = clock_timestamp() - interval '1 second' WHERE waitlist_entry_id = ${w1.entry_id}`.execute(db);
 
     // Live, the seat is free (the offer expired), but #2 owns it: not public, listed as full.
