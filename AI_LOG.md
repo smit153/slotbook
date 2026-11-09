@@ -626,4 +626,42 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 >
 > While CI runs, write the k6 load test plan, but don't start until CI is green.
 
+### Session 15: Phase 12 plan (abuse protection + observability)
+
+#### Turn 25. User
+> Next round of work, same process as before: before each phase write a plan and wait for my go; after each phase write a summary in docs/phases/; small commits, never squash, no co-author line; no destructive commands without asking; CI must stay green; every core requirement must stay true.
+>
+> Phase 12: abuse protection + observability
+> - Rate limits on all public endpoints with @fastify/rate-limit (slots, holds, release, confirm, booking routes), per IP, 429 + Retry-After. The k6 setup and e2e tests must still pass.
+> - /metrics endpoint: bookings by status, hold expiries, notification lag. Tests for each.
+> - Update the README so both show as built.
+>
+> Phase 13: waitlist (design first, no code)
+> Write a design addendum in docs/design.md and stop for my review. Core idea: when a seat frees up, the next waitlisted guest gets a time-limited hold created in the SAME transaction, so the seat is never visibly free. Decide and justify:
+> - what frees a seat (cancel, reschedule away, expired hold), each handing off atomically under the host lock
+> - offer duration, and a lapsed offer passing to the next person in the same transaction as its expiry (the sweeper stays only an optimisation)
+> - how the guest learns about the offer without email: a private waitlist link with an HMAC-derived token, never stored
+> - the slot API change so full slots are visible with a "join waitlist" action
+> - rules: FIFO, one entry per email per slot, a list cap, no offers within min notice, offers don't count toward the per-IP cap, group sessions get one offer per freed seat
+> - schema changes, lock order, and how the seat invariant extends to offers
+> - race tests: a cancel racing a public hold (the waitlisted guest must win), an offer lapsing to the next person, confirm after an offer expires → 410, two seats freeing at once → two offers
+> After I approve, build it with the same test-first approach, then a Playwright test for the waitlist flow.
+>
+> Phase 14 (only if 12 and 13 are green and I say go): live slot updates via SSE
+> Postgres LISTEN/NOTIFY fired inside the booking transactions (rolled-back changes never notify), one shared listener connection, a stream endpoint per event type sending only "slots changed" (no booking or guest data). The page refetches with a short debounce, sends heartbeats, reconnects on drop, and falls back to polling. Per-IP connection limit. The hold transaction stays the only authority. Tests: a hold in one client triggers a refetch in another; a rolled-back hold sends nothing.
+
+*AI checked the repo state (clean, in sync with origin) and how tests pick client IPs (HTTP tests use `app.inject` with `remoteAddress`, mostly 127.0.0.1; the web tests use one fixed address; e2e traffic comes from one Docker-network IP), then wrote the Phase 12 plan.*
+
+#### Turn 25. AI
+> Phase 12 plan:
+> - **Rate limits:** per-IP limits per route (slots/event 60/min, holds 20, release 30, confirm 20, manage GET 30, reschedule/cancel 20; login keeps 10), keyed on `request.ip` like the hold cap, 429 `RATE_LIMITED` + `Retry-After`.
+> - **Load-test config:** a `RATE_LIMIT_MULTIPLIER` env var raises the limits for k6. e2e runs at the production defaults.
+> - **`/metrics`:** Prometheus text computed from the database at scrape time: bookings by status, active holds, hold expiries by cause, pending notifications and the age of the oldest one (notification lag), plus a 429 counter. Guarded by `METRICS_TOKEN`.
+> - **Tests:** each limit, IP independence, no side effects on a 429, every metric, auth, and the output format. Verified with e2e, a short k6 run and CI.
+> - **README:** both extensions shown as built.
+>
+> Questions: the limit numbers; the multiplier for k6; the `/metrics` access rule; the lag definition while no dispatcher exists. Waiting for "go".
+
+---
+
 <!-- Append new turns below. -->
