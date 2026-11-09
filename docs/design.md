@@ -438,7 +438,7 @@ All bodies are JSON (anything else → 415). Every response carries `X-Request-I
 **Auth** (cookie `sb_session`: HttpOnly, SameSite=Lax, Path=/, 7 days, `Secure` in production; only sha256 stored)
 | Method | Path | Notes |
 |---|---|---|
-| POST 🔒 | `/api/auth/login` | `{email, password}`; Origin-checked; **@fastify/rate-limit: 10/min per IP** → 429 `RATE_LIMITED` + `Retry-After` |
+| POST 🔒 | `/api/auth/login` | `{email, password}`; Origin-checked; rate-limited (below) |
 | POST | `/api/auth/logout` | 204, deletes the session row |
 | GET | `/api/me` | `{host}` or 401 |
 
@@ -453,6 +453,9 @@ All bodies are JSON (anything else → 415). Every response carries `X-Request-I
 | POST 🔒 | `/api/host/bookings/{id}/cancel` | `{reason}` required |
 | GET 🔒 | `/api/host/notifications` | the sink, latest 100 (no tokens) |
 | GET | `/health` | DB ping |
+| GET | `/metrics` | Prometheus text (Phase 12): bookings by status, active holds, expiries by `via`, releases, pending notifications + oldest age, 429s per route. Bearer `METRICS_TOKEN` if set; else open in development, 404 in production |
+
+**Per-IP rate limits (Phase 12, `@fastify/rate-limit`, requests/min):** event info 60, slots 60, holds 20, release 30, confirm 20, manage view 30, reschedule 20, cancel 20, login 10 → 429 `RATE_LIMITED` + `Retry-After`. Keyed on `request.ip` (the `TRUST_PROXY` rule); scaled by `RATE_LIMIT_MULTIPLIER`; in-memory per instance.
 
 **Codes:**
 - 400 `VALIDATION` / `INVALID_JSON` / `IDEMPOTENCY_KEY_REQUIRED` / `IDEMPOTENCY_KEY_INVALID`

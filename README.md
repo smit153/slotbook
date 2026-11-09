@@ -189,6 +189,8 @@ Secrets: the hold secret and the manage token are HMACs derived from `APP_SECRET
 
 JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every response has `X-Request-Id`. Routes marked 🔒 also send `Cache-Control: no-store` and `X-Robots-Tag: noindex`.
 
+**Rate limits (per client IP, per minute):** event info 60, slots 60, holds 20, release 30, confirm 20, manage view 30, reschedule 20, cancel 20, login 10. Over a limit: **429 `RATE_LIMITED`** with `Retry-After`. The client IP follows the same `TRUST_PROXY` rule as the hold cap, so `X-Forwarded-For` can't be spoofed. `RATE_LIMIT_MULTIPLIER` scales all of them (the k6 setup uses 1000).
+
 **Public / guest**
 
 | Method | Path | Body → response |
@@ -206,7 +208,7 @@ JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every respo
 
 | Method | Path | |
 |---|---|---|
-| POST 🔒 | `/api/auth/login` | `{email, password}`; 10 attempts / min / IP |
+| POST 🔒 | `/api/auth/login` | `{email, password}` |
 | POST | `/api/auth/logout` | |
 | GET | `/api/me` | `{host}` or 401 |
 | GET / PUT | `/api/host/settings` | `{name?, timezone?}` |
@@ -217,6 +219,7 @@ JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every respo
 | POST 🔒 | `/api/host/bookings/{id}/cancel` | `{reason}` (required for hosts) |
 | GET 🔒 | `/api/host/notifications` | the notifications sink |
 | GET | `/health` | database ping |
+| GET | `/metrics` | Prometheus text: bookings by status, active holds, hold expiries by cause, releases, pending notifications and notification lag, 429s per route. Needs `Authorization: Bearer $METRICS_TOKEN` when that is set; without a token it is open in development and 404 in production |
 
 **Status codes:**
 - 400 bad input or a missing key
@@ -270,6 +273,8 @@ The app reads its environment at startup (`src/server/config.ts`) and refuses to
 | `DB_POOL_MAX` | `10` | no | Connection pool size. A request waiting for a host lock holds a connection for up to 2.5 s |
 | `TRUST_PROXY` | `false` | no | `false` = the client IP is the socket peer. `1` (or n) = trust that many proxy hops in `X-Forwarded-For`. `true` is rejected, because it would let clients spoof their IP and dodge the per-IP hold cap |
 | `SESSION_TTL_HOURS` | `168` | no | Host session lifetime (no sliding renewal) |
+| `RATE_LIMIT_MULTIPLIER` | `1` | no | Multiplies every per-IP rate limit (see API). The k6 load test sets 1000 |
+| `METRICS_TOKEN` | none | no (≥ 16 chars) | Bearer token for `GET /metrics`. Unset: `/metrics` is open in development and returns 404 in production |
 | `WEB_DIST_DIR` | `dist/web` next to the server build | no | Where the built SPA is served from |
 | `SEED_HOST_PASSWORD` | `demo1234` | no | Password the seed gives `demo@slotbook.dev` (seed only) |
 | `APP_PORT` / `DB_PORT` | `3000` / `5432` | no | Host ports published by `docker-compose.yml` |
@@ -313,8 +318,8 @@ Named as in the brief. This section is updated as later work adds to them.
 
 | Extension | Status |
 |---|---|
-| **Abuse protection** | **Partial.** Built: a per-IP cap of 3 active holds (429 `HOLD_LIMIT`), so one client can't hold every slot; login rate-limited to 10/min per IP (`@fastify/rate-limit`). Missing: rate limits on the other public endpoints (slots, holds, confirm, manage). Rotating IP addresses gets around the cap. The rate-limit store is in memory, so it is per instance. |
-| **Observability** | **Partial.** Built: structured JSON logs (pino) with a request ID on every line and in the `X-Request-Id` header, secrets redacted; `/health` with a database ping. Missing: metrics (bookings, hold expiries, notification lag). |
+| **Abuse protection** | **Built.** Per-IP rate limits on every public endpoint and on login (`@fastify/rate-limit`, 429 `RATE_LIMITED` + `Retry-After`; see API), and a per-IP cap of 3 active holds (429 `HOLD_LIMIT`), so one client can't hold every slot. Limits: rotating IP addresses gets around both, users behind one NAT share them, and the rate-limit counts live in memory, so with several instances each keeps its own. |
+| **Observability** | **Built.** Structured JSON logs (pino) with a request ID on every line and in the `X-Request-Id` header, secrets redacted; `/health` with a database ping; `GET /metrics` in Prometheus format (bookings by status, hold expiries by cause, notification lag as pending count + oldest age, 429s per route), computed from the database at scrape time. Notification lag only grows for now, because nothing delivers notifications yet. |
 | **End-to-end tests and CI** | **Built.** Playwright (Chromium) guest-flow tests against the Docker production build, and a GitHub Actions workflow that runs every test on every push (see Tests → CI). |
 | **Load test** | **Built.** k6 against the compose production build: many hosts and one busy host, results and a database check per run (see Tests → Load test). |
 | **Accessibility** | **Partial.** The keyboard-only guest flow is tested in a real browser: book, open the manage link and cancel with Tab, Enter and typing only, with a visible focus ring on every control. The pages use semantic lists, labelled controls, `aria-pressed`, `role="alert"`/`"status"`, and the tests find elements by role and name. Missing: no screen-reader walk-through and no automated contrast/ARIA audit. |
@@ -330,8 +335,7 @@ This is the single list. The design doc links here.
 **Not built**
 - **No live deployment.** The app runs locally with `docker compose up`. Deploying would need a host such as Render plus Supabase or Neon, using the direct Postgres connection (not a transaction pooler), `TRUST_PROXY=1`, `APP_ORIGIN` set to the public URL, a strong `APP_SECRET`, and the seed run once.
 - **Notifications are only written, not delivered.** The `notifications` table is the sink. The columns for delivery (`attempts`, `next_attempt_at`, `delivered_at`) exist, but there is no dispatcher posting to a webhook (designed in `docs/design.md` §3: `SKIP LOCKED` + lease, at-least-once). Order isn't guaranteed either: consumers should dedupe on the id and order by `created_at`.
-- **No metrics** (see Observability).
-- **Rate limits only on login** (see Abuse protection); the IP cap can be bypassed with many IPs.
+- **Abuse limits are per IP and per instance:** many IPs get around them, and with several app instances each counts separately (Postgres-backed counters would fix that; Redis is ruled out by the brief).
 - **No real email or calendar sync** (out of scope per the brief).
 - **No no-show tracking.** Started bookings are frozen, so a host can't mark a no-show.
 - **No windows that cross midnight**, and no per-event slot interval (the step is always the duration).
