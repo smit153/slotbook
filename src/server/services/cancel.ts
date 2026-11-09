@@ -7,6 +7,7 @@ import { bookingIdByTokenHash, bookingView, enqueueNotification, lockBooking, re
 import { failure, type ServiceResult } from './errors.js';
 import { assertTransition } from './transitions.js';
 import { writeTx, type Faults } from './tx.js';
+import { handOffFreeSeats } from './waitlist-handoff.js';
 
 export interface CancelDeps {
   db: Database;
@@ -60,6 +61,7 @@ async function cancelLocked(
     status: 'cancelled', cancelled_at: T, cancelled_by: by, cancel_reason: reason,
   }).where('id', '=', bookingId).execute(); // trigger frees the seat
   await recordEvent(trx, bookingId, 'cancelled', 'confirmed', 'cancelled', T, { cancelled_by: by, reason });
+  await handOffFreeSeats(trx, booking.host_id, T, 'cancel'); // the freed seat goes to the waitlist first
   const view = await bookingView(trx, bookingId);
   await enqueueNotification(trx, 'booking.cancelled', view, T, { cancelled_by: by, reason });
 

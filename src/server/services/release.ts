@@ -5,6 +5,7 @@ import { lockBooking, recordEvent } from './booking-common.js';
 import { failure, type ServiceResult } from './errors.js';
 import { assertTransition } from './transitions.js';
 import { writeTx, type Faults } from './tx.js';
+import { handOffFreeSeats } from './waitlist-handoff.js';
 
 export interface ReleaseDeps {
   db: Database;
@@ -41,6 +42,7 @@ export async function releaseHold(deps: ReleaseDeps, holdId: string, body: unkno
     assertTransition('held', 'expired');
     await trx.updateTable('bookings').set({ status: 'expired' }).where('id', '=', holdId).execute(); // trigger frees the seat
     await recordEvent(trx, holdId, 'released', 'held', 'expired', T);
+    await handOffFreeSeats(trx, booking.host_id, T, 'release');
 
     await deps.faults?.beforeCommit?.();
     return { status: 200, body: { hold_id: holdId, status: 'expired' as const } };

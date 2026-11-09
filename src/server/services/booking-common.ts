@@ -15,6 +15,8 @@ export interface LockedBooking {
   guest_email: string | null;
   guest_tz: string | null;
   confirmed_at: Date | null;
+  /** Set on waitlist offers (design §13): the entry this hold was offered to. */
+  waitlist_entry_id: string | null;
 }
 
 /**
@@ -31,7 +33,7 @@ export async function lockBooking(
   await faults?.afterHostLock?.();
   const booking = await trx.selectFrom('bookings')
     .select(['id', 'host_id', 'event_type_id', 'occupancy_id', 'status', 'start_at', 'end_at', 'expires_at',
-      'guest_name', 'guest_email', 'guest_tz', 'confirmed_at'])
+      'guest_name', 'guest_email', 'guest_tz', 'confirmed_at', 'waitlist_entry_id'])
     .where('id', '=', bookingId)
     .forUpdate()
     .executeTakeFirstOrThrow();
@@ -119,7 +121,7 @@ export async function enqueueNotification(
   }).execute();
 }
 
-export type ExpiryVia = 'sweeper' | 'hold' | 'reschedule';
+export type ExpiryVia = 'sweeper' | 'hold' | 'reschedule' | 'cancel' | 'release' | 'confirm' | 'waitlist';
 
 /**
  * held → expired for every hold of `hostId` whose expires_at <= T, with ONE audit row per hold,

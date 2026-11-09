@@ -6,6 +6,7 @@ import { bookingView, enqueueNotification, lockBooking, recordEvent, type Bookin
 import { failure, type ServiceResult } from './errors.js';
 import { assertTransition } from './transitions.js';
 import { writeTx, type Faults } from './tx.js';
+import { handOffFreeSeats } from './waitlist-handoff.js';
 
 export interface ConfirmDeps {
   db: Database;
@@ -49,6 +50,8 @@ export async function confirmHold(deps: ConfirmDeps, holdId: string, body: unkno
           assertTransition('held', 'expired');
           await trx.updateTable('bookings').set({ status: 'expired' }).where('id', '=', holdId).execute();
           await recordEvent(trx, holdId, 'expired', 'held', 'expired', T, { via: 'confirm' });
+          // The freed seat (e.g. a lapsed waitlist offer) goes to the next waitlisted guest now.
+          await handOffFreeSeats(trx, booking.host_id, T, 'confirm');
           return failure(410, 'HOLD_EXPIRED', 'This hold expired; please pick the slot again');
         }
         assertTransition('held', 'confirmed');
@@ -58,6 +61,10 @@ export async function confirmHold(deps: ConfirmDeps, holdId: string, body: unkno
           manage_token_hash: manageTokenHash(token), confirmed_at: T,
         }).where('id', '=', holdId).execute();
         await recordEvent(trx, holdId, 'confirmed', 'held', 'confirmed', T);
+        if (booking.waitlist_entry_id) {
+          // A claimed waitlist offer: the entry is done, in the same transaction.
+          await trx.updateTable('waitlist_entries').set({ status: 'booked', resolved_at: T }).where('id', '=', booking.waitlist_entry_id).execute();
+        }
         const view = await bookingView(trx, holdId);
         await enqueueNotification(trx, 'booking.confirmed', view, T);
         await deps.faults?.beforeCommit?.();

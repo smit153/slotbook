@@ -11,6 +11,7 @@ import type { Json } from '../db/types.js';
 import { failure, type ServiceResult } from './errors.js';
 import { claimKey, holdRequestHash, storeResponse } from './idempotency.js';
 import { sweepExpiredHolds } from './booking-common.js';
+import { handOffFreeSeats } from './waitlist-handoff.js';
 import { isSlotConflict, lockedNow, writeTx, type Faults } from './tx.js';
 
 const SCOPE = 'hold';
@@ -49,7 +50,7 @@ export interface HoldCreated {
 const DEFAULT_HOLD_TTL_MIN = 5;
 const DEFAULT_IP_HOLD_CAP = 3;
 
-class Gone extends Error {}
+export class Gone extends Error {}
 /** Thrown inside the transaction so it ROLLS BACK: a 429 must not be stored for the key. */
 class HoldLimit extends Error {}
 
@@ -61,13 +62,13 @@ export function normalizeIp(ip: string): string | null {
   return isIP(out) ? out : null;
 }
 
-interface Target {
+export interface Target {
   host: HostRef;
   eventType: EventTypeRef;
 }
 
 /** Resolve the ACTIVE host + event type by slug (no lock; re-checked under the lock). */
-async function resolveTarget(db: Database, hostSlug: string, eventSlug: string): Promise<Target | null> {
+export async function resolveTarget(db: Database, hostSlug: string, eventSlug: string): Promise<Target | null> {
   const row = await db
     .selectFrom('event_types as e')
     .innerJoin('hosts as h', 'h.id', 'e.host_id')
@@ -85,7 +86,7 @@ async function resolveTarget(db: Database, hostSlug: string, eventSlug: string):
 }
 
 /** Re-read host + event type under the host lock: they may have been deactivated or edited. */
-async function lockTarget(trx: Transaction<DB>, t: Target): Promise<Target> {
+export async function lockTarget(trx: Transaction<DB>, t: Target): Promise<Target> {
   const host = await sql<{ id: string; slug: string; name: string; timezone: string; active: boolean }>`
     SELECT id, slug, name, timezone, active FROM hosts WHERE id = ${t.host.id} FOR UPDATE`.execute(trx);
   const h = host.rows[0];
@@ -144,6 +145,8 @@ export async function createHold(deps: HoldDeps, req: HoldRequest): Promise<Serv
       if ((ip?.n ?? 0) >= ipCap) throw new HoldLimit();
 
       await sweepExpiredHolds(trx, host.id, T, 'hold');
+      // Waitlisted guests get freed seats first (design §13.2): the public only sees what is left.
+      await handOffFreeSeats(trx, host.id, T, 'hold');
 
       const result = await claim(trx, deps, host, eventType, startAt, T, ttlMin, clientIp);
 

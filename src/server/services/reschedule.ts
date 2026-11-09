@@ -11,6 +11,7 @@ import {
 import { failure, type ServiceResult } from './errors.js';
 import { assertTransition } from './transitions.js';
 import { isSlotConflict, writeTx, type Faults } from './tx.js';
+import { handOffFreeSeats } from './waitlist-handoff.js';
 
 export interface RescheduleDeps {
   db: Database;
@@ -64,6 +65,7 @@ export async function rescheduleBooking(deps: RescheduleDeps, token: string, bod
     };
 
     await sweepExpiredHolds(trx, host.id, T, 'reschedule');
+    await handOffFreeSeats(trx, host.id, T, 'reschedule'); // waitlisted guests before a move INTO their slot
 
     const input = await loadAvailabilityInput(trx, host, eventType,
       { from: newStart, to: new Date(newStart.getTime() + 1) }, { now: T, withOccupancies: false });
@@ -90,6 +92,7 @@ export async function rescheduleBooking(deps: RescheduleDeps, token: string, bod
 
     const previous = { previous_start_at: booking.start_at.toISOString(), previous_end_at: booking.end_at.toISOString() };
     await recordEvent(trx, id, 'rescheduled', 'confirmed', 'confirmed', T, previous);
+    await handOffFreeSeats(trx, host.id, T, 'reschedule'); // the seat it left goes to the waitlist
     const view = await bookingView(trx, id);
     await enqueueNotification(trx, 'booking.rescheduled', view, T, previous);
 

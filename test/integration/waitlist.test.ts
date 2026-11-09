@@ -23,11 +23,11 @@ beforeEach(() => truncateAll(db));
 afterEach(() => assertSeatInvariant(db));
 
 let n = 0;
-async function join(sc: Scenario, o: Partial<{ email: string; ip: string; startAt: Date; key: string }> = {}) {
+async function join(sc: Scenario, o: Partial<{ email: string; ip: string; startAt: Date; key: string; name: string }> = {}) {
   n += 1;
   return joinWaitlist(deps, {
     host: sc.hostSlug, slug: sc.ev.slug, start_at: (o.startAt ?? sc.slot).toISOString(),
-    name: `Waiter ${n}`, email: o.email ?? `waiter${n}@example.test`, tz: 'Europe/Berlin',
+    name: o.name ?? `Waiter ${n}`, email: o.email ?? `waiter${n}@example.test`, tz: 'Europe/Berlin',
     clientIp: o.ip ?? freshIp(), idempotencyKey: o.key ?? `wl-key-${n}-${Date.now()}`,
   });
 }
@@ -246,10 +246,32 @@ describe('waitlist rules', () => {
   it('joining is idempotent per key: a replay returns the same entry and token; a different body → 422', async () => {
     const sc = await scenario(db, { capacity: 1 });
     await book(db, sc);
-    const first = await joined(sc, { key: 'wl-same-key-1', email: 'k@example.test' });
-    const again = await joined(sc, { key: 'wl-same-key-1', email: 'k@example.test' });
+    const first = await joined(sc, { key: 'wl-same-key-1', email: 'k@example.test', name: 'Kay' });
+    const again = await joined(sc, { key: 'wl-same-key-1', email: 'k@example.test', name: 'Kay' });
     expect([again.entry_id, again.waitlist_token]).toEqual([first.entry_id, first.waitlist_token]);
-    const other = await join(sc, { key: 'wl-same-key-1', email: 'other@example.test' });
+    const other = await join(sc, { key: 'wl-same-key-1', email: 'other@example.test', name: 'Kay' });
     expect(other.status).toBe(422);
+  });
+});
+
+describe('the waitlist invariants are not vacuous (design §13.8)', () => {
+  it('detects a free seat left while someone waits (a freeing path that forgot the handoff)', async () => {
+    const sc = await scenario(db, { capacity: 1 });
+    const b = await book(db, sc);
+    const w = await joined(sc);
+    // Free the seat behind the service's back (no handoff): cancel the booking with raw SQL.
+    await sql`UPDATE bookings SET status = 'cancelled', cancelled_at = now(), cancelled_by = 'guest' WHERE id = ${b.id}`.execute(db);
+    await expect(assertSeatInvariant(db)).rejects.toThrow(/not handed to the waitlist/);
+    await sql`UPDATE waitlist_entries SET status = 'left', resolved_at = now() WHERE id = ${w.entry_id}`.execute(db); // restore for afterEach
+  });
+
+  it('detects an offered entry whose offer is not a live hold', async () => {
+    const sc = await scenario(db, { capacity: 1 });
+    const b = await book(db, sc);
+    const w = await joined(sc);
+    await cancelByGuest(deps, b.token, {});
+    await sql`UPDATE bookings SET status = 'expired' WHERE waitlist_entry_id = ${w.entry_id}`.execute(db); // no lapse recorded
+    await expect(assertSeatInvariant(db)).rejects.toThrow(/disagree/);
+    await sql`UPDATE waitlist_entries SET status = 'lapsed', resolved_at = now() WHERE id = ${w.entry_id}`.execute(db);
   });
 });
