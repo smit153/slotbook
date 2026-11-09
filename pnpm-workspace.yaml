@@ -1,5 +1,16 @@
+# Why this file exists: pnpm 12 FAILS `pnpm install` (ERR_PNPM_IGNORED_BUILDS) when a
+# dependency has an install script that is neither allowed nor denied here. Checked in Phase 9
+# on a clean copy: without this file the install stops.
+#
+# None of the scripts is needed, so all are denied (no third-party code runs at install time,
+# and no C toolchain is needed in Docker or CI):
+#  - esbuild (used by tsx and Vite): the script only re-checks the platform binary, which comes
+#    from the optional @esbuild/<platform> package anyway. Verified: tsx runs with it denied.
+#  - ssh2 → cpu-features, protobufjs: dev-only, pulled in by testcontainers' Docker client
+#    (dockerode). Their scripts build optional native speed-ups or run a postinstall check; the
+#    tests use the local Docker socket, not SSH.
 allowBuilds:
   cpu-features: false
-  esbuild: true
+  esbuild: false
   protobufjs: false
   ssh2: false
