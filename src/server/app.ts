@@ -6,7 +6,7 @@ import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { sql } from 'kysely';
-import { allowedOrigins, type Config } from './config.js';
+import { allowedOrigins, startupWarnings, type Config } from './config.js';
 import type { Database } from './db/kysely.js';
 import { installErrorHandling } from './http/errors.js';
 import { installSecurityHeaders, logRedactPaths, logSerializers } from './http/security.js';
@@ -54,6 +54,8 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
     // (Fastify 5.x: requestIdLogLabel moved into the log controller.)
     logController: new LogController({ requestIdLogLabel: 'request_id' }),
   });
+
+  for (const w of startupWarnings(config)) app.log.warn({ security: true }, w);
 
   installSecurityHeaders(app);
   installErrorHandling(app);

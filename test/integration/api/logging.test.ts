@@ -5,6 +5,7 @@ import { assertSeatInvariant } from '../../helpers/invariants.js';
 import { GUEST } from '../../helpers/flows.js';
 import { HOST_PASSWORD, loginAs, makeApp, TEST_ORIGIN } from '../../helpers/app.js';
 import { scenario } from '../../helpers/scenario.js';
+import { PUBLIC_DEFAULT_APP_SECRET } from '../../../src/server/config.js';
 
 /** R21: no guest or host secret ever reaches the logs; tokenised URLs are redacted. */
 const db = testDb();
@@ -52,5 +53,17 @@ describe('R21: secrets never reach the logs', () => {
     expect(text).toContain('"request_id"');
     // Sanity: the logs are not simply empty.
     expect(text.split('\n').filter(Boolean).length).toBeGreaterThan(10);
+  });
+});
+
+describe('startup warning', () => {
+  it('the app logs a loud warn line when APP_SECRET is the public compose default', async () => {
+    const logs = capture();
+    const app = await makeApp(db, { env: { APP_SECRET: PUBLIC_DEFAULT_APP_SECRET }, log: { level: 'info', stream: logs.stream } });
+    await app.close();
+    const warn = logs.text().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { level: number; msg: string; security?: boolean })
+      .find((l) => l.msg.includes('APP_SECRET'));
+    expect(warn).toMatchObject({ level: 40, security: true });
+    expect(warn!.msg).toMatch(/^!!! INSECURE/);
   });
 });

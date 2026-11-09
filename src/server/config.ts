@@ -42,6 +42,27 @@ const envSchema = z.object({
   }
 });
 
+/**
+ * The placeholder APP_SECRET that docker-compose.yml falls back to and .env.example ships.
+ * It is public (it is in this repo), so with it anyone can derive hold secrets and manage
+ * tokens. Fine for a local demo; startupWarnings() makes it impossible to miss otherwise.
+ */
+export const PUBLIC_DEFAULT_APP_SECRET = 'dev-only-secret-change-me-0123456789abcdef';
+
+/** Loud, non-fatal problems with the configuration, logged once at startup. */
+export function startupWarnings(c: Pick<Config, 'APP_SECRET' | 'NODE_ENV'>): string[] {
+  const warnings: string[] = [];
+  if (c.APP_SECRET === PUBLIC_DEFAULT_APP_SECRET) {
+    warnings.push(
+      '!!! INSECURE: APP_SECRET is the PUBLIC default from docker-compose.yml/.env.example. ' +
+      'Anyone can forge hold secrets and manage links (view, reschedule or cancel any booking). ' +
+      'Fine for a local demo only. Set APP_SECRET to a random value, e.g. `openssl rand -base64 48`.' +
+      (c.NODE_ENV === 'production' ? ' (NODE_ENV=production)' : ''),
+    );
+  }
+  return warnings;
+}
+
 /** Every variable the app reads at startup (the README's configuration table must list each one). */
 export const ENV_KEYS: readonly string[] = Object.keys(envSchema.shape);
 
