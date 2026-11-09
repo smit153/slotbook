@@ -58,5 +58,6 @@ ${rows.join('\n')}
 |---|---|---|---|---|---|
 ${latency.join('\n')}
 `;
-writeFileSync(resolve(import.meta.dirname, '../loadtest/RESULTS.md'), md);
+// Only the default run (newest folder, no argument) rewrites the committed table; a named folder just prints.
+if (!process.argv[2]) writeFileSync(resolve(import.meta.dirname, '../loadtest/RESULTS.md'), md);
 console.log(md);
