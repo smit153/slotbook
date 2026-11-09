@@ -17,6 +17,7 @@
     "migrate": "tsx --env-file-if-exists=.env src/server/db/migrate.ts",
     "seed": "tsx --env-file-if-exists=.env src/server/db/seed.ts",
     "test": "vitest run",
+    "test:concurrency": "vitest run --project integration holds-concurrency holds-idempotency holds-ip-cap holds-clock holds-lock-timeout write-tx confirm cancel reschedule sweeper cross-cutting guest-http",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json && tsc -p src/web/tsconfig.json && tsc -p test/web/tsconfig.json",
     "lint": "eslint .",
