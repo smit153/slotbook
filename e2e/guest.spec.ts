@@ -46,6 +46,9 @@ test('two guests race for the same time: one holds it, the other is told it was 
   const [slot] = await firstDaySlots(request, 'Europe/Berlin');
   const a = await (await browser.newContext()).newPage();
   const b = await (await browser.newContext()).newPage();
+  // B's page is STALE on purpose (no live updates): this test is about the server refusing a
+  // click on a time someone else took meanwhile. (Live updates have their own test, live.spec.ts.)
+  await b.route('**/stream', (r) => r.abort());
   await Promise.all([a.goto(PAGE), b.goto(PAGE)]);
   await expect(timeButton(a, slot!)).toBeVisible();
   await expect(timeButton(b, slot!)).toBeVisible(); // both see it as free
