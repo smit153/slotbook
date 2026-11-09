@@ -195,7 +195,7 @@ JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every respo
 - 415
 - 422 `SLOT_NOT_OFFERED` / `IDEMPOTENCY_KEY_REUSED` / validation of availability
 - 429 `HOLD_LIMIT` / `RATE_LIMITED`, with `Retry-After`
-- 503 `HOST_BUSY` / `TRY_AGAIN`, with `Retry-After: 1`
+- 503 `HOST_BUSY` / `TRY_AGAIN` / `SERVER_BUSY` (no database connection free in time), with `Retry-After: 1`
 - 500 only for genuine bugs, with a `request_id` and never a stack
 
 The full list is in `docs/design.md` §7.

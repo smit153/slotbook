@@ -465,7 +465,7 @@ All bodies are JSON (anything else → 415). Every response carries `X-Request-I
 - 422 `SLOT_NOT_OFFERED` / `IDEMPOTENCY_KEY_REUSED` / `INVALID_TIMEZONE` / `INVALID_FIELD` / `OVERLAPPING_WINDOWS` / `INVALID_WINDOW` / `INVALID_OVERRIDE` / `DUPLICATE_DATE`
 - 429 `HOLD_LIMIT` (`Retry-After: 60`) / `RATE_LIMITED`
 - 500 `INTERNAL` (+ `request_id`, never a stack)
-- 503 `HOST_BUSY` / `TRY_AGAIN` (`Retry-After: 1`). A deadlock or serialization failure is retried once inside `writeTx`; one that still reaches the error handler is a 503, never a 500.
+- 503 `HOST_BUSY` / `TRY_AGAIN` / `SERVER_BUSY` (`Retry-After: 1`). `SERVER_BUSY` = the connection pool had no free connection within `connectionTimeoutMillis` (overload; found by the k6 load test, where it surfaced as 500s). A deadlock or serialization failure is retried once inside `writeTx`; one that still reaches the error handler is a 503, never a 500.
 
 ---
 
