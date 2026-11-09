@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { createHold } from '../../src/server/services/holds.js';
 import { createBooking, createOccupancy, testDb, truncateAll } from '../helpers/db.js';
 import { assertSeatInvariant } from '../helpers/invariants.js';
+import { waitUntilSomeoneWaitsOnALock as waitForLockWaiter } from '../helpers/locks.js';
 import { APP_SECRET, dbNow, holdRequest, scenario } from '../helpers/scenario.js';
 
 /**
@@ -17,27 +18,17 @@ beforeEach(() => truncateAll(db));
 afterEach(() => assertSeatInvariant(db));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Poll pg_stat_activity until some backend waits on a lock (the new hold is blocked). */
-async function waitUntilSomeoneWaitsOnALock(): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const { rows } = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-       WHERE datname = current_database() AND wait_event_type = 'Lock'`.execute(db);
-    if (rows[0]!.n > 0) return;
-    await sleep(10);
-  }
-  throw new Error('nobody blocked on the host lock');
-}
+const waitUntilSomeoneWaitsOnALock = () => waitForLockWaiter(db);
 
 describe('holds read the clock after taking the host lock', () => {
   it('an old hold that expires WHILE a new hold waits for the host lock does not cause a wrong 409', async () => {
     const sc = await scenario(db, { capacity: 1 });
 
-    // Old hold on the slot, expiring ~1.2 s from now.
+    // Old hold on the slot, expiring ~2 s from now (wide enough that a slow CI runner still
+    // gets the new hold blocked on the lock before it expires; the guard below checks that).
     const occ = await createOccupancy(db, sc.ev, sc.slot.toISOString());
     const old = await createBooking(db, occ, sc.ev, 'held');
-    await sql`UPDATE bookings SET expires_at = clock_timestamp() + interval '1200 milliseconds' WHERE id = ${old}`.execute(db);
+    await sql`UPDATE bookings SET expires_at = clock_timestamp() + interval '2000 milliseconds' WHERE id = ${old}`.execute(db);
     const { expires_at: oldExpiry } = await db.selectFrom('bookings').select('expires_at').where('id', '=', old).executeTakeFirstOrThrow();
 
     // Someone else holds the host lock (e.g. a slow booking for another slot).

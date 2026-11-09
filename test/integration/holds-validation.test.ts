@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { createHold, type HoldCreated } from '../../src/server/services/holds.js';
 import { seatsTaken, testDb, truncateAll } from '../helpers/db.js';
 import { assertSeatInvariant } from '../helpers/invariants.js';
+import { waitUntilSomeoneWaitsOnALock } from '../helpers/locks.js';
 import { APP_SECRET, addEventType, dbNow, freshIp, holdRequest, scenario } from '../helpers/scenario.js';
 
 const db = testDb({ max: 40 });
@@ -85,7 +86,7 @@ describe('deactivated host / event type → 404', () => {
     });
     await isLocked;
     const pending = createHold(deps, holdRequest(sc)); // resolves the ACTIVE event type, then blocks
-    await new Promise((r) => setTimeout(r, 150));
+    await waitUntilSomeoneWaitsOnALock(db); // really blocked behind the edit (no fixed sleep)
     release();
     await editor;
     expect((await pending).status).toBe(404);

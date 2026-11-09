@@ -6,6 +6,7 @@ import { releaseHold } from '../../src/server/services/release.js';
 import { manageTokenHash } from '../../src/server/auth/secrets.js';
 import { seatsTaken, testDb, truncateAll } from '../helpers/db.js';
 import { assertSeatInvariant } from '../helpers/invariants.js';
+import { waitUntilSomeoneWaitsOnALock } from '../helpers/locks.js';
 import { APP_SECRET, dbNow, holdRequest, scenario } from '../helpers/scenario.js';
 
 const db = testDb({ max: 20 });
@@ -91,7 +92,9 @@ describe('R6: expiry is enforced at confirm time', () => {
   it('a hold that expires WHILE confirm waits for the host lock → 410, not confirmed', async () => {
     const sc = await scenario(db);
     const h = await hold(sc);
-    await sql`UPDATE bookings SET expires_at = clock_timestamp() + interval '600 milliseconds' WHERE id = ${h.hold_id}`.execute(db);
+    // ~2 s of life: wide enough that a slow CI runner still gets confirm blocked on the lock
+    // before the hold expires (the guard below fails loudly rather than passing vacuously).
+    await sql`UPDATE bookings SET expires_at = clock_timestamp() + interval '2000 milliseconds' WHERE id = ${h.hold_id}`.execute(db);
     const { expires_at } = await db.selectFrom('bookings').select('expires_at').where('id', '=', h.hold_id).executeTakeFirstOrThrow();
 
     let release!: () => void;
@@ -106,8 +109,8 @@ describe('R6: expiry is enforced at confirm time', () => {
     await isLocked;
 
     const pending = confirmHold(deps, h.hold_id, confirmBody(h)); // starts while the hold is valid
-    await new Promise((r) => setTimeout(r, 100));
-    expect((await dbNow(db)).getTime()).toBeLessThan(expires_at!.getTime());
+    await waitUntilSomeoneWaitsOnALock(db); // confirm is really blocked on the host lock…
+    expect((await dbNow(db)).getTime()).toBeLessThan(expires_at!.getTime()); // …and the hold was still valid then
     while ((await dbNow(db)).getTime() <= expires_at!.getTime() + 50) await new Promise((r) => setTimeout(r, 50));
     release();
     await blocker;

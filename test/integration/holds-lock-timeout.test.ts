@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { createHold } from '../../src/server/services/holds.js';
 import { testDb, truncateAll } from '../helpers/db.js';
 import { assertSeatInvariant } from '../helpers/invariants.js';
+import { waitUntilSomeoneWaitsOnALock } from '../helpers/locks.js';
 import { APP_SECRET, holdRequest, scenario } from '../helpers/scenario.js';
 
 /**
@@ -54,7 +55,8 @@ describe('lock_timeout on the hold path', () => {
     const sc = await scenario(db);
     const lock = await holdHostLock(sc.hostId);
     const pending = createHold({ db, appSecret: APP_SECRET, lockTimeoutMs: 2_000 }, holdRequest(sc));
-    await new Promise((r) => setTimeout(r, 200));
+    await waitUntilSomeoneWaitsOnALock(db); // it really waited on the lock…
+    await new Promise((r) => setTimeout(r, 200)); // …for a while, well under the 2 s timeout
     await lock.release();
     expect((await pending).status).toBe(201);
   });
