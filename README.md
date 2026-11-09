@@ -279,6 +279,7 @@ This is the single list. The design doc links here.
 - **Manage tokens can't be revoked or rotated individually**, and there is no `APP_SECRET` rotation. Changing the secret invalidates all links at once.
 - **The manage token is in API paths** (`/api/bookings/{token}`). Our logs redact it, but proxy or CDN access logs would see it. The fix is to send it in a header.
 - **CSRF defence is SameSite=Lax cookies plus an Origin check**, with no CSRF token.
+- **`docker compose up` falls back to a public `APP_SECRET`** (the one in `docker-compose.yml` and `.env.example`), so the one-command run works without setup. With it, anyone can derive hold secrets and manage tokens. The app still starts (it's a local demo), but logs a loud `!!! INSECURE` warning at startup. For anything real, set `APP_SECRET`, e.g. `APP_SECRET=$(openssl rand -base64 48) docker compose up`.
 
 **Operations**
 - **No purge job.** Bookings are append-only (DELETE is blocked), so expired holds stay as rows. Idempotency keys are purged after 24 h. A deliberate admin archive job would be next.
