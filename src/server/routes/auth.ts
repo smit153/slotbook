@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { sendResult } from '../http/reply.js';
 import { login, logout, SESSION_COOKIE } from '../services/auth.js';
-import { originGuard, requireHost, type RouteContext } from './context.js';
+import { originGuard, rateLimit, requireHost, type RouteContext } from './context.js';
 
 export function authRoutes(ctx: RouteContext) {
   const cookieOptions = {
@@ -15,7 +15,7 @@ export function authRoutes(ctx: RouteContext) {
     // Brute-force protection: @fastify/rate-limit on this route only (~10/min per client IP;
     // request.ip respects TRUST_PROXY). In-memory store: per app instance (design §5.8 notes).
     app.post('/auth/login', {
-      config: { sensitive: true, rateLimit: { max: 10, timeWindow: '1 minute' } },
+      config: { sensitive: true, rateLimit: rateLimit(ctx, 'login') },
       preHandler: originGuard(ctx),
     }, async (req, reply) => {
       const r = await login(ctx.db, req.body ?? {}, ctx.config.SESSION_TTL_HOURS);

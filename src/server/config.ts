@@ -36,6 +36,10 @@ const envSchema = z.object({
   /** Extra allowed origins, comma-separated (e.g. a staging UI). */
   EXTRA_ALLOWED_ORIGINS: z.string().optional(),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 90).default(24 * 7),
+  /** Multiplies every per-IP rate limit (http/rate-limits.ts). The k6 load test uses 1000. */
+  RATE_LIMIT_MULTIPLIER: z.coerce.number().int().min(1).max(100_000).default(1),
+  /** Bearer token for GET /metrics. Unset: open in development/test, 404 in production. */
+  METRICS_TOKEN: z.string().min(16, 'METRICS_TOKEN must be at least 16 characters').optional(),
 }).superRefine((env, ctx) => {
   if (env.NODE_ENV === 'production' && !env.APP_ORIGIN) {
     ctx.addIssue({ code: 'custom', path: ['APP_ORIGIN'], message: 'APP_ORIGIN is required in production' });

@@ -4,6 +4,7 @@ import type {} from '@fastify/rate-limit';
 import type { Config } from '../config.js';
 import type { Database } from '../db/kysely.js';
 import type { Faults } from '../services/tx.js';
+import { limitFor, type LimitName, type RateLimitCounter } from '../http/rate-limits.js';
 import { SESSION_COOKIE, sessionHost, type HostMe } from '../services/auth.js';
 
 export interface RouteContext {
@@ -13,6 +14,13 @@ export interface RouteContext {
   /** Test hooks forwarded to the write services. */
   faults?: Faults;
   lockTimeoutMs?: number;
+  /** Requests refused by each per-IP limit (exported by /metrics). */
+  rateLimited: RateLimitCounter;
+}
+
+/** Route config for a per-IP limit (src/server/http/rate-limits.ts). */
+export function rateLimit(ctx: RouteContext, name: LimitName) {
+  return limitFor(name, ctx.config.RATE_LIMIT_MULTIPLIER, ctx.rateLimited);
 }
 
 declare module 'fastify' {

@@ -9,6 +9,7 @@ import { sql } from 'kysely';
 import { allowedOrigins, startupWarnings, type Config } from './config.js';
 import type { Database } from './db/kysely.js';
 import { installErrorHandling } from './http/errors.js';
+import { RateLimitCounter } from './http/rate-limits.js';
 import { installSecurityHeaders, logRedactPaths, logSerializers } from './http/security.js';
 import type { Faults } from './services/tx.js';
 import type { RouteContext } from './routes/context.js';
@@ -60,10 +61,10 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
   installSecurityHeaders(app);
   installErrorHandling(app);
   await app.register(fastifyCookie);
-  // global: false → only routes that opt in (login today; abuse protection later) are limited.
+  // global: false → each public route opts in with its own per-IP limit (http/rate-limits.ts).
   await app.register(fastifyRateLimit, { global: false });
 
-  const ctx: RouteContext = { db, config, origins: allowedOrigins(config), faults, lockTimeoutMs };
+  const ctx: RouteContext = { db, config, origins: allowedOrigins(config), faults, lockTimeoutMs, rateLimited: new RateLimitCounter() };
 
   app.get('/health', async (_req, reply) => {
     try {

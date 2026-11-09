@@ -3,7 +3,7 @@ import { sendResult } from '../http/reply.js';
 import { createHold } from '../services/holds.js';
 import { releaseHold } from '../services/release.js';
 import { confirmHold, type Confirmed } from '../services/confirm.js';
-import type { RouteContext } from './context.js';
+import { rateLimit, type RouteContext } from './context.js';
 
 type HoldId = { Params: { id: string } };
 const bodyOf = (b: unknown) => (b && typeof b === 'object' ? (b as Record<string, unknown>) : {});
@@ -13,7 +13,7 @@ export function holdRoutes(ctx: RouteContext) {
 
   return async (app: FastifyInstance) => {
     // The hold secret is in the response, so it is sensitive too (no-store).
-    app.post('/holds', { config: { sensitive: true } }, async (req, reply) => {
+    app.post('/holds', { config: { sensitive: true, rateLimit: rateLimit(ctx, 'hold') } }, async (req, reply) => {
       const key = req.headers['idempotency-key'];
       if (typeof key !== 'string' || key.length === 0) {
         return reply.code(400).send({ error: { code: 'IDEMPOTENCY_KEY_REQUIRED', message: 'Send an Idempotency-Key header (e.g. a UUID)' } });
@@ -25,10 +25,10 @@ export function holdRoutes(ctx: RouteContext) {
       }));
     });
 
-    app.post<HoldId>('/holds/:id/release', { config: { sensitive: true } }, async (req, reply) =>
+    app.post<HoldId>('/holds/:id/release', { config: { sensitive: true, rateLimit: rateLimit(ctx, 'release') } }, async (req, reply) =>
       sendResult(reply, await releaseHold(deps, req.params.id, bodyOf(req.body))));
 
-    app.post<HoldId>('/holds/:id/confirm', { config: { sensitive: true } }, async (req, reply) => {
+    app.post<HoldId>('/holds/:id/confirm', { config: { sensitive: true, rateLimit: rateLimit(ctx, 'confirm') } }, async (req, reply) => {
       const r = await confirmHold(deps, req.params.id, bodyOf(req.body));
       if (r.status === 200) {
         const body = r.body as Confirmed;
