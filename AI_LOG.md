@@ -664,4 +664,27 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 16: Phases 12, 13 and 14 in one run
+
+#### Turn 26. User
+> Go. Answers: the limits are fine; keep the limiter on for k6 with RATE_LIMIT_MULTIPLIER=1000; the /metrics access rule is fine; pending count + oldest age is the right lag definition for now.
+>
+> Do Phases 12, 13 and 14 in one run, without stopping between them:
+> - Phase 12 exactly as planned.
+> - Phase 13 waitlist: write the design addendum in docs/design.md first and commit it, then build it test-first, including the race tests and a Playwright test for the waitlist flow. If anything in the design turns out unsound while building, fix the design and note it.
+> - Phase 14 SSE as described earlier. SSE-triggered refetches count toward the slots rate limit, so make sure the debounce keeps a normal page well inside 60/min, and give the stream its own per-IP connection limit.
+>
+> Same rules: small commits, a summary per phase in docs/phases/, AI_LOG entries, CI green after each phase, every core requirement stays true, no destructive commands without asking. If a phase can't get green, stop there and report instead of starting the next one.
+>
+> At the end, give me one combined summary: what was built, the bugs found, test counts, e2e and CI results, and a short k6 run confirming no regressions.
+
+*AI built Phase 12:*
+- *Rate limits: per-IP limits on all 9 public routes through one helper, and `RATE_LIMIT_MULTIPLIER` (k6 uses 1000). 13 tests; mutation-checked by removing the confirm route's limit.*
+- *`/metrics` (Prometheus text from the database, `METRICS_TOKEN`): 7 tests with strict format parsing. Its first lag query used `EXTRACT`, which the no-SQL-time-zone scan flagged; it now subtracts two database timestamps in TypeScript.*
+- *It committed the config change before the README table had the new vars, so the drift test was red for three local commits.*
+- *Results: e2e 7/7 at production limits (23 slots requests, 0 × 429). k6 0 × 429, 0 errors.*
+- *A cold k6 run showed 33/s at 50/s; a warm re-run gave 50.0/s, so no regression.*
+- *Its report script overwrote `loadtest/RESULTS.md`; it restored the committed copy and changed the script to only print for a named folder.*
+- *CI green on `b9b215c`. Wrote `docs/phases/phase-12.md`.*
+
 <!-- Append new turns below. -->
