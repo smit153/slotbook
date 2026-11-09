@@ -52,7 +52,8 @@ Open http://localhost:5173.
 |---|---|
 | `pnpm test` | every test (unit, integration, web); starts its own Postgres |
 | `pnpm test:concurrency` | only the concurrency, lock and clock tests (see below) |
-| `pnpm typecheck` / `pnpm lint` | TypeScript (server, web, web tests) / ESLint, including a rule that bans reading the process clock in booking code |
+| `pnpm e2e` | Playwright tests in a real browser (Chromium) against the Docker production build (see below) |
+| `pnpm typecheck` / `pnpm lint` | TypeScript (server, web, web tests, e2e) / ESLint, including a rule that bans reading the process clock in booking code |
 | `pnpm build` / `pnpm start` | production build (server + SPA) / run it |
 | `pnpm db:types` | regenerate `src/server/db/types.ts` from the migrations (kysely-codegen); `--verify` fails if it is stale |
 
@@ -73,7 +74,7 @@ On the development machine (Intel Core 5 210H, 12 threads, 11 GiB RAM, Docker on
 | web | 31 s |
 | starting and migrating each Postgres container | about 6 s |
 
-`pnpm test:concurrency` takes about 38 s.
+`pnpm test:concurrency` takes about 43 s.
 
 | Project | Where | What |
 |---|---|---|
@@ -102,6 +103,35 @@ This runs the 12 files where requests race or real time matters:
 - `api/guest-http`: the same over HTTP
 
 The design's reliability cases (R1–R27) and the test that proves each are listed in `docs/design.md` §9.
+
+### End-to-end tests in a real browser
+
+```sh
+pnpm exec playwright install chromium   # once
+pnpm e2e
+```
+
+`scripts/e2e.sh` builds and starts the production Docker image as a **separate compose project** (`slotbook-e2e`, app on :3100, database on :5433), so a running dev stack is not touched. It uses a fresh random `APP_SECRET`, waits for `/health` and runs Playwright (Chromium). It always finishes with `docker compose down -v` on that project only. `E2E_KEEP=1 pnpm e2e` leaves the stack running for debugging. About 1.5 min, most of it the image build.
+
+Each test sets up what it needs (through the UI or the API) and runs on its own:
+
+| Test (`e2e/`) | Proves |
+|---|---|
+| full guest flow | Berlin browser: pick a time → held with a countdown → confirm → manage link → reschedule → cancel; the server agrees at each step |
+| race | two browsers click the same time: one holds it, the other is told it was just taken and its list refreshes; the first can still book |
+| time zones | New York and Kolkata browsers show the same instant with their own labels; the switcher relabels |
+| wrong browser clock | with the browser's clock 10 min fast, the countdown still starts near 5:00 and confirm works (the countdown uses the server's `expires_at − server_now`) |
+| leaving the page | navigating away releases the hold (`pagehide` + `keepalive`), and the time is offered again right away |
+| host | seeded login; a booking (made via the API) shows in the host's zone with the zone printed |
+| keyboard only | book, open the manage link and cancel using only Tab, Enter and typing; every focused control shows a focus ring |
+
+The race, clock and leaving-the-page tests were mutation-checked: with the countdown built on the browser clock, or without the `pagehide` release, they fail.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push and pull request, in two parallel jobs:
+- **test:** a gitleaks secret scan of the full history (reviewed false positives are in `.gitleaksignore`), typecheck, lint, build, `pnpm test`
+- **e2e:** `pnpm e2e`. If it fails, the Playwright report, traces and app logs are uploaded as an artifact.
 
 ---
 
@@ -252,9 +282,9 @@ Named as in the brief. This section is updated as later work adds to them.
 |---|---|
 | **Abuse protection** | **Partial.** Built: a per-IP cap of 3 active holds (429 `HOLD_LIMIT`), so one client can't hold every slot; login rate-limited to 10/min per IP (`@fastify/rate-limit`). Missing: rate limits on the other public endpoints (slots, holds, confirm, manage). Rotating IP addresses gets around the cap. The rate-limit store is in memory, so it is per instance. |
 | **Observability** | **Partial.** Built: structured JSON logs (pino) with a request ID on every line and in the `X-Request-Id` header, secrets redacted; `/health` with a database ping. Missing: metrics (bookings, hold expiries, notification lag). |
-| End-to-end tests and CI | Not yet (next: Playwright guest flow + GitHub Actions). The UI is currently tested in jsdom against the real API. |
+| **End-to-end tests and CI** | **Built.** Playwright (Chromium) guest-flow tests against the Docker production build, and a GitHub Actions workflow that runs every test on every push (see Tests → CI). |
 | Load test | Not yet (planned: k6 against the compose build). |
-| Accessibility | Not claimed. The pages use semantic lists, labelled controls, `aria-pressed` and `role="alert"`, and the UI tests find elements by role and name, but there has been no keyboard-only or screen-reader walk-through. |
+| **Accessibility** | **Partial.** The keyboard-only guest flow is tested in a real browser: book, open the manage link and cancel with Tab, Enter and typing only, with a visible focus ring on every control. The pages use semantic lists, labelled controls, `aria-pressed`, `role="alert"`/`"status"`, and the tests find elements by role and name. Missing: no screen-reader walk-through and no automated contrast/ARIA audit. |
 | Live deployment | Not built (see Known gaps). |
 | Waitlist, Reminders, Calendar invite, Host webhooks, Round-robin team events, External busy times, Daily cap and per-guest limit, Embeddable widget | Not built. |
 
@@ -284,8 +314,8 @@ This is the single list. The design doc links here.
 **Operations**
 - **No purge job.** Bookings are append-only (DELETE is blocked), so expired holds stay as rows. Idempotency keys are purged after 24 h. A deliberate admin archive job would be next.
 - **Connection pool under a burst.** Requests waiting for one host's lock each hold a pooled connection for up to 2.5 s (then 503). A burst on one host can therefore slow other hosts. To be measured in the load test.
-- **No real-browser test yet.** The UI is tested in jsdom only (Playwright is next).
-- **Accessibility not verified** with a keyboard-only or screen-reader walk-through.
+- **End-to-end tests are Chromium only** (no Firefox or WebKit), and they cover the guest flow plus one host check, not every dashboard page.
+- **Accessibility: screen readers not verified.** The keyboard flow is tested; a screen-reader walk-through and an automated audit are not done.
 
 ---
 
@@ -298,5 +328,7 @@ src/server/   Fastify app: config, db (Kysely, migrations, seed, codegen types),
 src/shared/   zod schemas + time-zone helpers used by both sides
 src/web/      React SPA: host dashboard, guest booking page, manage page
 test/         unit · integration (real Postgres) · web (jsdom + real API) · helpers
+e2e/          Playwright specs (real browser, Docker production build); scripts/e2e.sh runs them
+.github/      CI workflow
 docs/         design.md, phases/
 ```
