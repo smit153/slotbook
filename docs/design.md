@@ -599,14 +599,7 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 7. Daily cap + per-guest limit, only if the core is fully green
 8. Full rate limiting (`@fastify/rate-limit`)
 
-**Known gaps (documented, not built):**
-- Manage-token revocation and rotation, and `APP_SECRET` key rotation.
-- The token is visible in infra access logs via the API path (fix: an `Authorization` header).
-- Windows crossing midnight. Per-event custom slot intervals.
-- No ordering guarantee for notifications. Consumers must dedupe and order by `occurred_at`.
-- Real email and calendar sync (out of scope per the brief).
-- **No no-show tracking.** Started bookings can't be cancelled, so a host has no way to mark a no-show.
-- **No purge job.** Bookings are append-only, so expired holds stay as rows forever. A deliberate admin archive/purge job (run outside the app role, with the delete trigger disabled for that session) is a next step.
+**Known gaps:** the single, maintained list is the **"Known gaps" section of the [README](../README.md#known-gaps)** (Phase 9). It is not repeated here so the two can't drift apart.
 
 ---
 
