@@ -622,3 +622,99 @@ Integration tests truncate tables per test. The concurrency tests use a pool of 
 12. README + AI_LOG.md
 13. If-time list (§11), in order
 14. Report PDF
+
+---
+
+## 13. Waitlist (Phase 13 addendum)
+
+**Goal:** when a full slot frees up, the next waitlisted guest gets a **time-limited hold created in the same transaction that freed the seat**, so the seat is never visibly free to the public in between.
+
+### 13.1 Model: an offer *is* a hold
+An offer is an ordinary `held` booking on the slot's session, linked to the waitlist entry (`bookings.waitlist_entry_id`) and with `client_ip = NULL`.
+
+That one choice makes most of the rules automatic:
+- **Seats:** the seat trigger counts the offer like any hold, and the exclusion and capacity constraints still guard it.
+- **Expiry and confirm:** an expired offer becomes `expired` through the existing paths, and `confirm` gives 410 after expiry.
+- **Per-IP cap:** offers don't count toward it, because the cap counts held bookings by `client_ip`, and offers have none.
+
+### 13.2 What frees a seat, and the handoff
+Seats free up in five ways:
+- **cancel** (guest or host)
+- **reschedule away** (the old session)
+- **an expired hold**, public or offer, when a write path sweeps it
+- **release** (a guest gives a hold back)
+- **a host edit that raises capacity**
+
+Every write path that takes the host lock (hold, confirm, release, cancel, reschedule, the sweeper, host event-type edits, the waitlist endpoints) ends with one shared step, `handOffFreeSeats(trx, hostId, T)`, run **before COMMIT**:
+1. For every session of the host that has `waiting` entries, compute its stored free seats: `capacity − seats_taken`, after the transaction's own sweep.
+2. Give each free seat, in FIFO order, to the next `waiting` entry: insert an offer, mark the entry `offered`, and write a `waitlist.offered` notification row, all in a SAVEPOINT. If the session can't be claimed (a constraint fires), the entry stays waiting.
+3. Mark an `offered` entry whose offer booking is now `expired` as **`lapsed`**. Its seat is passed on in step 2 of the *same* transaction.
+
+So "a lapsed offer passes to the next person in the same transaction as its expiry" holds whoever expires it. The sweeper is only an optimisation: any write on the host, including the next public hold attempt, does the same work first.
+
+**Visible-free window.** Expiry is lazy: an offer or hold expires by time, and the seat is only *stored* as free when the next write sweeps it. So the **read path** reserves seats for the waitlist: `public_free = max(0, capacity − live_taken − waiting)`. A slot with a waiting list never looks free to the public, even in the moments before the sweep.
+
+The **waitlist status endpoint** also does a "read-repair". If the asking entry is `waiting` and its session has a live free seat (for example an unswept lapsed offer), it runs the write path (host lock → sweep → handoff) before answering. That way the next person learns about their offer without waiting for the sweeper.
+
+### 13.3 Rules (all checked under the host lock)
+| Rule | How |
+|---|---|
+| FIFO | Order by `seq` (identity). Ties are impossible. |
+| One active entry per email per slot | Partial unique index on `(event_type_id, start_at, email) WHERE status IN ('waiting','offered')` → 409 `ALREADY_WAITLISTED`. A guest may join again after lapsing or leaving. |
+| List cap | At most **10 waiting** per slot → 409 `WAITLIST_FULL`. |
+| Join only when full | You can't join a slot the public could book (`public_free > 0`) → 409 `SLOT_AVAILABLE`. The slot must also pass the same engine rules as a hold (grid, window, notice, horizon) → 422 `SLOT_NOT_OFFERED`. |
+| No offers within min notice | An offer is made only if the slot still passes the hold rules at `T`, which include notice. Otherwise the waiting entries for that slot become `closed`, because no one can be offered it any more. |
+| Offers don't count toward the per-IP cap | Offers carry `client_ip = NULL`. |
+| Per-IP cap on *joining* | At most **3 active entries per IP**, like the hold cap → 429 `WAITLIST_LIMIT`. Without this, one client could fill every list and then let each offer lapse. |
+| Group sessions | One offer per freed seat, FIFO, so two seats freeing at once → two offers. |
+| Offer duration | **15 minutes**, capped at the slot's start. Longer than a public hold (5 min): the guest is not on the page and has to notice the offer through their link. The cap of 10 bounds the worst case (every offer lapsing) at 2.5 h for one seat. |
+
+### 13.4 How the guest learns about an offer (no email)
+- **Joining** returns a private link once: `/waitlist#<entry_id>.<token>`, where the token is HMAC-SHA256(`APP_SECRET`, `"waitlist:v1:" + id`) in base64url.
+- **Nothing is stored:** the server re-derives the token and compares in constant time. As with the manage link, the token sits in the URL fragment, so it never reaches a server log or a Referer.
+- **The API takes the token in a header** (`Waitlist-Token`), not the path, which avoids the manage link's known gap.
+- **The page** shows the position while waiting. It polls (Phase 14 adds live updates) and, once offered, shows a countdown and a **Confirm** button. Confirming uses the name, email and zone given at join.
+- **Outbox:** a `waitlist.offered` row is written in the offer transaction, ready for a future email dispatcher. Its payload contains no token.
+
+### 13.5 API
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/hosts/{host}/events/{slug}/slots?…&include_full=1` | Opt-in. Full slots (rules OK, `public_free = 0`) are returned with `seats_left: 0` and `waitlist: {open, waiting}`; `open = false` when the list is at its cap. Without the parameter the response is unchanged, so existing clients and k6 keep their meaning. |
+| POST 🔒 | `/api/waitlist` | `Idempotency-Key` required; `{host, slug, start_at, name, email, tz}` → 201 `{entry_id, waitlist_token, waitlist_url, position}`. A replay returns the same token (re-derived). |
+| GET 🔒 | `/api/waitlist/{id}` | header `Waitlist-Token` → `{status, position?, offer?: {expires_at, server_now}, slot}`; read-repair as in §13.2. A wrong token → 404. |
+| POST 🔒 | `/api/waitlist/{id}/claim` | Confirms the offer with the entry's details → `{booking, manage_token, manage_url}`. Offer expired → 410 `OFFER_EXPIRED` (the entry lapses, the next guest is offered, same transaction); not offered → 409 `NOT_OFFERED`. |
+| POST 🔒 | `/api/waitlist/{id}/leave` | `waiting` → `left`; `offered` → the offer is released and handed to the next guest. Idempotent. |
+
+Rate limits (per IP per minute): join 10, status 60, claim 20, leave 20.
+
+### 13.6 Schema (migration `0004_waitlist`)
+- `waitlist_entries`:
+  - columns: `id`, `seq` (identity, FIFO), `host_id`, `event_type_id`, `start_at`, `name`, `email` (lower-case CHECK), `guest_tz`, `client_ip`, `status` (enum `waiting | offered | booked | lapsed | left | closed`), `created_at`, `offered_at`, `resolved_at`
+  - composite FK `(event_type_id, host_id)` → `event_types`
+  - per-status CHECKs: `offered` needs `offered_at`; final statuses need `resolved_at`
+  - the partial unique index above
+  - DELETE blocked (append-only, like bookings)
+- `bookings.waitlist_entry_id`: nullable, unique, FK → `waitlist_entries`; `CHECK (waitlist_entry_id IS NULL OR client_ip IS NULL)`.
+- `notifications.type` gains `waitlist.offered`.
+- `booking_events`: offers are recorded as `offered` (`via` = the path that freed the seat).
+
+### 13.7 Lock order
+idempotency key → per-IP lock → **host row** → bookings → sessions (trigger) → **waitlist entries**.
+
+Waitlist entries are only ever written under their host's lock, so the waitlist adds no new deadlock risk: all writes for one host are serialised by the host row. The waitlist endpoints take the same order: the join takes the per-IP lock (for its own cap) and then the host lock; claim and leave take the host lock, then the entry's booking.
+
+### 13.8 Invariants (added to the after-every-test check)
+1. **The existing seat invariant is unchanged:** an offer is a held booking.
+2. **Offer consistency:**
+   - an `offered` entry has exactly one linked `held` booking
+   - a `booked` entry has a linked `confirmed` (or later `cancelled`) booking
+   - `waiting`, `left` and `closed` entries have no live linked booking
+3. **Handoff invariant (stored state):** after every committed write, no session has both a free stored seat and a `waiting` entry, unless the slot can no longer be offered (inside min notice, event type inactive, outside the rules).
+
+### 13.9 Race tests (written first)
+- **W1 · cancel races public holds:** a full 1:1 slot with one waiting guest; a cancel and 20 parallel public holds for the same slot. Expect 0 public 201s, the waiting guest `offered`, and the seat invariant intact. Either order works: if the hold runs first it's full (409); if the cancel runs first, the seat is handed off in the cancel transaction.
+- **W2 · an offer lapses to the next guest:** W1 and W2 waiting, seat freed → W1 offered. W1's offer expires, then a public hold attempt: W1 `lapsed`, W2 `offered`, the public hold 409. All in the public hold's transaction (one transaction id across the rows).
+- **W3 · claim after the offer expired:** 410 `OFFER_EXPIRED`; W1 `lapsed`, W2 `offered` in that same transaction.
+- **W4 · two seats free at once:** a group session (capacity 2) full, three waiting; two holds expire in one sweep (and, separately, two concurrent cancels). Expect two offers (W1, W2), and W3 still waiting.
+- Rules: a duplicate email → 409; the cap → 409; joining a free slot → 409; within notice → no offer and the entries are `closed`; a waitlisted guest's public holds are capped as usual while their offer isn't counted; a wrong token → 404; leaving while offered → the next guest is offered; the read-repair on GET.
+- **Playwright:** guest A books the only seat (API). Guest B sees "Full · join waitlist", joins and gets the link. A cancels (API). B's waitlist page shows the offer, B confirms, and B is booked.
