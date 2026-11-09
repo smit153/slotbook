@@ -5,6 +5,7 @@ import type { Config } from '../config.js';
 import type { Database } from '../db/kysely.js';
 import type { Faults } from '../services/tx.js';
 import { limitFor, type LimitName, type RateLimitCounter } from '../http/rate-limits.js';
+import type { SlotEventHub } from '../realtime/slot-events.js';
 import { SESSION_COOKIE, sessionHost, type HostMe } from '../services/auth.js';
 
 export interface RouteContext {
@@ -16,6 +17,8 @@ export interface RouteContext {
   lockTimeoutMs?: number;
   /** Requests refused by each per-IP limit (exported by /metrics). */
   rateLimited: RateLimitCounter;
+  /** Live slot updates: the shared LISTEN connection (Phase 14). */
+  slotEvents: SlotEventHub;
 }
 
 /** Route config for a per-IP limit (src/server/http/rate-limits.ts). */

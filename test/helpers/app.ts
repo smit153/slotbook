@@ -4,6 +4,7 @@ import { loadConfig, type Config } from '../../src/server/config.js';
 import type { Database } from '../../src/server/db/kysely.js';
 import { hashPassword } from '../../src/server/auth/password.js';
 import { APP_SECRET } from './scenario.js';
+import { testDatabaseUrl } from './db.js';
 
 export const TEST_ORIGIN = 'http://localhost:3000';
 
@@ -20,7 +21,8 @@ export function testConfig(env: Record<string, string> = {}): Config {
 
 export async function makeApp(db: Database, o: Partial<Omit<AppDeps, 'db'>> & { env?: Record<string, string> } = {}): Promise<FastifyInstance> {
   const { env, ...rest } = o;
-  return buildApp({ config: testConfig(env), db, log: false, ...rest });
+  // The live-updates listener connects lazily, only if a test opens a stream.
+  return buildApp({ config: testConfig(env), db, log: false, slotEventsUrl: testDatabaseUrl(), ...rest });
 }
 
 /** Log in as a host through the real route; returns the Cookie header value. */

@@ -20,6 +20,8 @@ import { authRoutes } from './routes/auth.js';
 import { hostRoutes } from './routes/host.js';
 import { metricsRoutes } from './routes/metrics.js';
 import { waitlistRoutes } from './routes/waitlist.js';
+import { streamRoutes } from './routes/stream.js';
+import { SlotEventHub } from './realtime/slot-events.js';
 
 export interface AppDeps {
   config: Config;
@@ -29,6 +31,10 @@ export interface AppDeps {
   /** Test hooks forwarded to the write services. */
   faults?: Faults;
   lockTimeoutMs?: number;
+  /** Connection string for the live-updates listener (default: config.DATABASE_URL). Opened lazily. */
+  slotEventsUrl?: string;
+  /** Heartbeat interval of the live-updates stream (tests use a short one). */
+  streamHeartbeatMs?: number;
 }
 
 /**
@@ -42,7 +48,7 @@ export function trustProxyOption(hops: false | number): false | ((addr: string, 
   return (_addr, hop) => hop < hops;
 }
 
-export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDeps): Promise<FastifyInstance> {
+export async function buildApp({ config, db, log, faults, lockTimeoutMs, slotEventsUrl, streamHeartbeatMs }: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: log === false
       ? false
@@ -66,7 +72,9 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
   // global: false → each public route opts in with its own per-IP limit (http/rate-limits.ts).
   await app.register(fastifyRateLimit, { global: false });
 
-  const ctx: RouteContext = { db, config, origins: allowedOrigins(config), faults, lockTimeoutMs, rateLimited: new RateLimitCounter() };
+  const slotEvents = new SlotEventHub({ connectionString: slotEventsUrl ?? config.DATABASE_URL, log: app.log });
+  app.addHook('onClose', async () => { await slotEvents.close(); });
+  const ctx: RouteContext = { db, config, origins: allowedOrigins(config), faults, lockTimeoutMs, rateLimited: new RateLimitCounter(), slotEvents };
 
   app.get('/health', async (_req, reply) => {
     try {
@@ -84,6 +92,7 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
   await app.register(authRoutes(ctx), { prefix: '/api' });
   await app.register(hostRoutes(ctx), { prefix: '/api/host' });
   await app.register(waitlistRoutes(ctx), { prefix: '/api' });
+  await app.register(streamRoutes(ctx, { heartbeatMs: streamHeartbeatMs }), { prefix: '/api' });
   await app.register(metricsRoutes(ctx));
 
   // Serve the built SPA when present (production / docker). In dev, Vite serves it.
