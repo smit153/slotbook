@@ -718,3 +718,35 @@ Waitlist entries are only ever written under their host's lock, so the waitlist 
 - **W4 · two seats free at once:** a group session (capacity 2) full, three waiting; two holds expire in one sweep (and, separately, two concurrent cancels). Expect two offers (W1, W2), and W3 still waiting.
 - Rules: a duplicate email → 409; the cap → 409; joining a free slot → 409; within notice → no offer and the entries are `closed`; a waitlisted guest's public holds are capped as usual while their offer isn't counted; a wrong token → 404; leaving while offered → the next guest is offered; the read-repair on GET.
 - **Playwright:** guest A books the only seat (API). Guest B sees "Full · join waitlist", joins and gets the link. A cancels (API). B's waitlist page shows the offer, B confirms, and B is booked.
+
+---
+
+## 14. Live slot updates (Phase 14)
+
+**Goal:** an open booking page learns that its slots changed without polling hard. **The stream is only a hint to refetch.** The hold transaction remains the only authority: a page showing a stale "free" time still gets 409 on click.
+
+- **Source: triggers, inside the writing transaction** (migration `0005_slot_notify`). Every change that can alter a host's offered slots calls `pg_notify('slots_changed', host_id)`. That covers INSERT and UPDATE of status or occupancy on `bookings`, INSERT and UPDATE of status on `waitlist_entries`, and writes to availability, overrides and event types.
+  - Postgres delivers a notification **only when its transaction commits**, so a rolled-back hold never notifies.
+  - Identical notifications in one transaction are delivered once.
+  - Being a trigger, no write path can forget it.
+  - The payload is only the host id.
+- **One shared listener:** a single dedicated `pg.Client` runs `LISTEN slots_changed`. It opens only when the first stream subscribes. It fans out per host, coalescing bursts over 200 ms, and reconnects with backoff (up to 10 s). After a reconnect it tells every stream "slots changed", because notifications sent while it was down are lost.
+  - `LISTEN` needs a **direct session connection**: it doesn't work through a transaction-mode pooler. That's one more reason for the direct-connection rule in the deployment notes.
+- **Endpoint:** `GET /api/hosts/{host}/events/{slug}/stream`, Server-Sent Events.
+  - It sends `retry: 3000`, then `event: ready`, `event: slots` ("changed"), and `event: ping` every 25 s. The data is always `{}`: no booking or guest data.
+  - Opening a stream is rate-limited (30/min per IP).
+  - **At most 3 concurrent streams per IP** → 429 `STREAM_LIMIT` with `Retry-After: 30`.
+  - Streams are ended before the server closes.
+- **Page** (`src/web/lib/slot-events.ts`, used by the slot picker): on `slots` it refetches, throttled to **≤ 1 per 5 s** (≤ 12/min, against the 60/min slots limit).
+  - It tracks the heartbeat: 60 s of silence → close and reconnect.
+  - After 3 errors in a row, or a refused stream (the browser stops retrying, e.g. on 429), it **falls back to polling every 30 s**. Without `EventSource` it polls from the start.
+- **Freshness limit:** a hold that expires *by time* changes nothing in the database until something sweeps it, so pages learn about it within the sweeper interval (30 s) or at the next write on that host. The read path already treats an expired hold as free, so a refetch shows it.
+- **Tests:**
+  - a hold in one client wakes another client's stream;
+  - a **rolled-back** change sends nothing, and the next committed change does;
+  - another host's change is ignored;
+  - heartbeats arrive;
+  - the per-IP stream limit;
+  - the listener is killed (`pg_terminate_backend`) → it reconnects, resyncs and keeps delivering;
+  - the page logic (throttle, fallback, reconnect on silence) with fake timers;
+  - Playwright: a hold in browser A turns the time into "full" in browser B without a reload.

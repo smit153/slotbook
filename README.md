@@ -189,7 +189,7 @@ Secrets: the hold secret and the manage token are HMACs derived from `APP_SECRET
 
 JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every response has `X-Request-Id`. Routes marked 🔒 also send `Cache-Control: no-store` and `X-Robots-Tag: noindex`.
 
-**Rate limits (per client IP, per minute):** event info 60, slots 60, holds 20, release 30, confirm 20, manage view 30, reschedule 20, cancel 20, waitlist join 10, waitlist status 60, claim 20, leave 20, login 10. Over a limit: **429 `RATE_LIMITED`** with `Retry-After`. The client IP follows the same `TRUST_PROXY` rule as the hold cap, so `X-Forwarded-For` can't be spoofed. `RATE_LIMIT_MULTIPLIER` scales all of them (the k6 setup uses 1000).
+**Rate limits (per client IP, per minute):** event info 60, slots 60, holds 20, release 30, confirm 20, manage view 30, reschedule 20, cancel 20, waitlist join 10, waitlist status 60, claim 20, leave 20, opening a live-updates stream 30, login 10. Over a limit: **429 `RATE_LIMITED`** with `Retry-After`. The client IP follows the same `TRUST_PROXY` rule as the hold cap, so `X-Forwarded-For` can't be spoofed. `RATE_LIMIT_MULTIPLIER` scales all of them (the k6 setup uses 1000).
 
 **Public / guest**
 
@@ -218,6 +218,7 @@ JSON in and out. Errors are always `{"error": {"code", "message"}}`. Every respo
 | GET 🔒 | `/api/host/bookings?upcoming=1` | |
 | POST 🔒 | `/api/host/bookings/{id}/cancel` | `{reason}` (required for hosts) |
 | GET 🔒 | `/api/host/notifications` | the notifications sink |
+| GET | `/api/hosts/{host}/events/{slug}/stream` | **Live updates** (Server-Sent Events): `event: slots` whenever this host's slots may have changed (data is always `{}`), `event: ping` every 25 s. Only a hint to refetch; the hold transaction decides. At most 3 concurrent streams per IP (429 `STREAM_LIMIT`). Design §14 |
 | POST 🔒 | `/api/waitlist` | header `Idempotency-Key`; `{host, slug, start_at, name, email, tz}` → 201 `{entry_id, waitlist_token, waitlist_url, position}`; only for a full time (409 `SLOT_AVAILABLE` otherwise) |
 | GET 🔒 | `/api/waitlist/{id}` | header `Waitlist-Token` → `{status, position, offer, slot}` |
 | POST 🔒 | `/api/waitlist/{id}/claim` | header `Waitlist-Token` → `{booking, manage_token, manage_url}`; 410 `OFFER_EXPIRED` |
@@ -266,7 +267,7 @@ The app reads its environment at startup (`src/server/config.ts`) and refuses to
 
 | Variable | Default | Required | Purpose |
 |---|---|---|---|
-| `DATABASE_URL` | none | **yes** | Postgres connection string. On a hosted Postgres use the direct connection, not a transaction pooler, because the booking path relies on session-level transactions and row locks |
+| `DATABASE_URL` | none | **yes** | Postgres connection string. On a hosted Postgres use the direct connection, not a transaction pooler, because the booking path relies on session-level transactions and row locks, and live updates use `LISTEN` |
 | `APP_SECRET` | none | **yes** (≥ 32 chars) | Key that hold secrets and manage tokens are derived from. Changing it invalidates every open hold and every manage link |
 | `APP_ORIGIN` | `http://localhost:$PORT` | **yes in production** | The browser origin of the app. Cookie-authenticated writes from any other `Origin` get 403 |
 | `EXTRA_ALLOWED_ORIGINS` | none | no | More allowed origins, comma-separated. In development the Vite origins (`localhost:5173`, `127.0.0.1:5173`) are added automatically |
@@ -347,6 +348,7 @@ This is the single list. The design doc links here.
 - **No host sign-up, password reset or multiple hosts per account.** There is one seeded login.
 - **Randomized operation test (R25) not written.** The invariant check runs after every test instead.
 
+- **Live updates are a hint with a freshness limit:** a hold that expires by time is only announced when something sweeps it (within the sweeper's 30 s), and the stream needs a direct Postgres connection (`LISTEN` doesn't work through a transaction pooler). The stream limit (3 per IP) is per instance, like the rate limits.
 - **Waitlist abuse:** joining needs no account, so fake emails from many IPs can fill a list (10 per slot) and let each 15-minute offer lapse, delaying a real guest by up to 2.5 h for one seat. Offers aren't emailed yet (the `waitlist.offered` outbox row is written); guests find out by keeping their waitlist page open.
 
 **Security trade-offs**
