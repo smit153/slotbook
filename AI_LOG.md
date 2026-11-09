@@ -491,4 +491,37 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 
 ---
 
+### Session 12: Phase 9 plan (README, cleanup, gaps)
+
+#### Turn 20. User
+> Good work. Answers for Phase 9:
+> 1. README: also add the seeded login, an env var table, how to run just the concurrency tests, the assumptions list, which optional extensions are built, and a line saying no starter template was used (the brief asks for that).
+> 2. Yes, one Known gaps section that the report can reuse.
+> 3. Remove the unused isCanonicalTimeZone helper, replace the index.html placeholder, and keep the pnpm native-build config only if it's needed (add a comment saying why).
+>
+> Before CI: run the concurrency and clock test files 20 times in a loop and report any flakes, and tell me how long pnpm test takes end to end.
+>
+> After Phase 9, in this order:
+> - Playwright + GitHub Actions CI: guest flow in a real browser, all tests on every push.
+> - k6 load test, run locally via the grafana/k6 Docker image against the compose production build. Add a load-test config so the per-IP hold cap doesn't turn everything into 429 (raise the cap via env, or TRUST_PROXY=1 with a fake X-Forwarded-For per virtual user), and document which. Seed enough hosts and slots for two scenarios: one busy host vs. many hosts. Report throughput, p95, error rate (409/503 separately from real errors), and my machine specs.
+> - Observability metrics only if time is left.
+>
+> No deployment; list it under known gaps.
+>
+> Same as before: plan first, wait for my go, summary after each phase.
+
+*AI checked the repo before planning: `src/web/index.html` no longer contains the Phase 1 placeholder page (it was replaced in Phase 7), so its earlier "placeholder text" question was inaccurate; the file is a bare shell. The denied builds (`ssh2`, `cpu-features`, `protobufjs`) are transitive dependencies of testcontainers. Machine: Intel Core 5 210H, 12 logical CPUs, 11 GiB RAM, WSL2.*
+
+#### Turn 20. AI
+> Phase 9 plan:
+> - **README** with everything asked for, plus a unit test that fails if an env var in the config schema is missing from the README table.
+> - **Known gaps** as one README section (deployment included); design §11 will link to it instead of keeping a second list.
+> - **Cleanup:** remove `isCanonicalTimeZone`; finish `index.html` (correction: there is no placeholder text left; it gets a description, a `<noscript>` and an inline favicon, because `/favicon.ico` currently returns the SPA HTML); test whether the pnpm build config is needed in a scratch copy, then keep it with a comment or drop it.
+> - **Before CI:** a new `pnpm test:concurrency` script, run 20 times in a loop with no retries, with flakes reported; `pnpm test` timed end to end over 3 cold runs.
+> - **Verification:** follow the README from a clean clone in the scratchpad.
+>
+> Questions: the set of concurrency files; README as the single gaps list; removing the clone's scratch volume afterwards. Waiting for "go".
+
+---
+
 <!-- Append new turns below. -->
