@@ -20,6 +20,8 @@
     "test": "vitest run",
     "test:concurrency": "vitest run --project integration holds-concurrency holds-idempotency holds-ip-cap holds-clock holds-lock-timeout write-tx confirm cancel reschedule sweeper cross-cutting guest-http",
     "e2e": "bash scripts/e2e.sh",
+    "loadtest": "bash scripts/loadtest.sh",
+    "loadtest:report": "tsx scripts/loadtest-report.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json && tsc -p src/web/tsconfig.json && tsc -p test/web/tsconfig.json && tsc -p e2e/tsconfig.json",
     "lint": "eslint .",

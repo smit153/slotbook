@@ -48,6 +48,11 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
+    // k6 script: runs inside k6, not Node (its own globals).
+    files: ['loadtest/**/*.js'],
+    languageOptions: { globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly', console: 'readonly' } },
+  },
+  {
     // Playwright specs: Node code, plus callbacks that run in the page (page.evaluate).
     files: ['e2e/**/*.ts'],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
