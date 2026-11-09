@@ -42,6 +42,9 @@ const envSchema = z.object({
   }
 });
 
+/** Every variable the app reads at startup (the README's configuration table must list each one). */
+export const ENV_KEYS: readonly string[] = Object.keys(envSchema.shape);
+
 /** Vite's dev server: its proxy forwards the browser's Origin (http://localhost:5173) unchanged. */
 export const VITE_DEV_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
 
