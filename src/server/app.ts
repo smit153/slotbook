@@ -18,6 +18,7 @@ import { holdRoutes } from './routes/holds.js';
 import { bookingRoutes } from './routes/bookings.js';
 import { authRoutes } from './routes/auth.js';
 import { hostRoutes } from './routes/host.js';
+import { metricsRoutes } from './routes/metrics.js';
 
 export interface AppDeps {
   config: Config;
@@ -81,6 +82,7 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
   await app.register(bookingRoutes(ctx), { prefix: '/api' });
   await app.register(authRoutes(ctx), { prefix: '/api' });
   await app.register(hostRoutes(ctx), { prefix: '/api/host' });
+  await app.register(metricsRoutes(ctx));
 
   // Serve the built SPA when present (production / docker). In dev, Vite serves it.
   const webDist = config.WEB_DIST_DIR;
@@ -89,7 +91,7 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
 
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
-    const isApi = path.startsWith('/api/') || path === '/api' || path === '/health';
+    const isApi = path.startsWith('/api/') || path === '/api' || path === '/health' || path === '/metrics';
     // A missing FILE (/favicon.ico, /robots.txt, a stale /assets/x.js) is a 404, not the app shell:
     // HTML served as a script or icon fails in confusing ways. SPA routes never contain a dot
     // (host and event slugs are [a-z0-9-]).
