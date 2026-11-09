@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
 import { testDb, truncateAll } from '../../helpers/db.js';
@@ -64,6 +67,38 @@ describe('error contract: always {error:{code,message}}, never a stack', () => {
     expect(res.body).not.toContain('kaboom');
     expect(res.body).not.toContain('.ts:');
     await app.close();
+  });
+});
+
+describe('serving the built SPA', () => {
+  async function spaApp() {
+    const dir = mkdtempSync(join(tmpdir(), 'slotbook-spa-'));
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>shell</title>');
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'assets', 'app.js'), 'console.log(1)');
+    const app = await makeApp(db, { env: { WEB_DIST_DIR: dir } });
+    return { app, cleanup: async () => { await app.close(); rmSync(dir, { recursive: true }); } };
+  }
+
+  it('page routes get the app shell; real files are served with their type', async () => {
+    const { app, cleanup } = await spaApp();
+    for (const url of ['/', '/login', '/dashboard/availability', '/demo/intro-30', '/manage?x=1']) {
+      const res = await app.inject({ method: 'GET', url });
+      expect([url, res.statusCode, res.headers['content-type']]).toEqual([url, 200, 'text/html; charset=utf-8']);
+    }
+    const js = await app.inject({ method: 'GET', url: '/assets/app.js' });
+    expect(js.statusCode).toBe(200);
+    expect(js.headers['content-type']).toMatch(/^(application|text)\/javascript/);
+    await cleanup();
+  });
+
+  it('a missing FILE (/favicon.ico, a stale asset) is a 404, not the app shell', async () => {
+    const { app, cleanup } = await spaApp();
+    for (const url of ['/favicon.ico', '/robots.txt', '/assets/gone-1234.js']) {
+      const res = await app.inject({ method: 'GET', url });
+      expect([url, res.statusCode, res.json().error.code]).toEqual([url, 404, 'NOT_FOUND']);
+    }
+    await cleanup();
   });
 });
 

@@ -85,8 +85,13 @@ export async function buildApp({ config, db, log, faults, lockTimeoutMs }: AppDe
   if (spa) await app.register(fastifyStatic, { root: webDist, wildcard: false });
 
   app.setNotFoundHandler((req, reply) => {
-    const isApi = req.url.startsWith('/api/') || req.url === '/api' || req.url === '/health';
-    if (spa && req.method === 'GET' && !isApi) return reply.sendFile('index.html');
+    const path = req.url.split('?')[0]!;
+    const isApi = path.startsWith('/api/') || path === '/api' || path === '/health';
+    // A missing FILE (/favicon.ico, /robots.txt, a stale /assets/x.js) is a 404, not the app shell:
+    // HTML served as a script or icon fails in confusing ways. SPA routes never contain a dot
+    // (host and event slugs are [a-z0-9-]).
+    const looksLikeFile = /\.[^/]*$/.test(path);
+    if (spa && req.method === 'GET' && !isApi && !looksLikeFile) return reply.sendFile('index.html');
     return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
   });
 
