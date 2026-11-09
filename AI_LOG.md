@@ -697,4 +697,21 @@ Transcript of building Slotbook with **Claude Code (Claude Opus 5.5)** in the te
 - *It found that its design wrongly listed capacity edits as freeing a seat (sessions keep their capacity snapshot), and corrected design §13.2.*
 - *Results: 455 tests; e2e 8/8; the waitlist tests ×10 green; CI green on `fe205c6`. Wrote `docs/phases/phase-13.md`.*
 
+*AI built Phase 14 (live slot updates):*
+- *Triggers call `pg_notify` inside the writing transactions, with one shared LISTEN connection (lazy, coalescing, reconnect + resync) and an SSE stream per event type (only `{}` data, heartbeats, 3 streams per IP).*
+- *The page refetches at most once per 5 s, reconnects on silence and falls back to polling.*
+- *Tests: 7 server tests over a real listening server, including a rolled-back change sending nothing and a killed listener reconnecting; 6 page-logic tests with fake timers; a Playwright test (a hold in browser A updates browser B without a reload).*
+- *Mutation-checked host filtering and the reconnect.*
+- *It noticed live updates could make the existing e2e race test flaky (B's page could refresh before B clicks) and made that page deliberately stale.*
+- *CI green on `bf4f25c`.*
+- *Closing checks: e2e 9/9 ×3, stream tests ×5, a short k6 run (0 errors, 0 × 429, 0 double bookings). Wrote `docs/phases/phase-14.md`.*
+
+#### Turn 26. AI
+> - Phases 12–14 are done; CI green after each.
+> - Built: rate limits on every public endpoint, `/metrics`, the waitlist (an offer is a hold made in the freeing transaction), live slot updates over SSE.
+> - Found: a design flaw (capacity edits don't free seats), two bugs in its own tests, a latent e2e flake, a false regression alarm.
+> - Results: 468 tests; e2e 9/9 (×4 runs); k6 clean.
+
+---
+
 <!-- Append new turns below. -->
